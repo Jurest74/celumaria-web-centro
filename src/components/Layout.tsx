@@ -289,20 +289,20 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
           </div>
           
           {/* Sombra solo en la parte que no está sobre el sidebar */}
-          <div 
-            className="absolute bottom-0 h-full transition-all duration-700 ease-out shadow-xl" 
+          <div
+            className="absolute bottom-0 h-full transition-all duration-700 ease-out shadow-xl"
             style={{
-              left: sidebarHovered ? '256px' : '64px', 
+              left: sidebarHovered ? '288px' : '64px',
               right: '0'
             }}
           ></div>
-          
+
           {/* Línea decorativa inferior - alineada con sidebar */}
-          <div 
-            className="absolute bottom-0 h-0.5 transition-all duration-700 ease-out z-10" 
+          <div
+            className="absolute bottom-0 h-0.5 transition-all duration-700 ease-out z-10"
             style={{
-              backgroundColor: '#90c5e7', 
-              left: sidebarHovered ? '253px' : '61px', 
+              backgroundColor: '#90c5e7',
+              left: sidebarHovered ? '288px' : '64px',
               right: '0'
             }}
           ></div>
@@ -385,7 +385,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
         )}
 
         {/* Auto-hide sidebar for desktop */}
-        <div 
+        <div
           className={`hidden sm:block bg-white shadow-xl border-r border-gray-300 fixed left-0 top-16 bottom-0 overflow-hidden z-20 transition-all duration-700 ease-out ${
             sidebarHovered ? 'w-72' : 'w-16'
           }`}
@@ -394,36 +394,37 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
         >
           {/* Línea azul de marca en el lado derecho */}
           <div className="absolute top-0 right-0 bottom-0 w-0.5" style={{backgroundColor: '#90c5e7'}}></div>
-          <div className="h-full overflow-y-auto relative">
+          <div className={`h-full relative ${sidebarHovered ? 'overflow-y-auto' : 'overflow-y-auto scrollbar-hide'}`}>
             {/* Collapsed state - only icons */}
             {!sidebarHovered && (
-              <div className="p-3 space-y-2">
+              <div className="py-3 px-2 space-y-2">
                 {filteredCategories.map((category) => {
-                  const hasCurrentView = category.items.some(item => item.id === currentView);
                   const CategoryIcon = category.icon;
-                  
+                  const isExpanded = expandedCategories.has(category.id);
+
                   return (
                     <div key={category.id} className="space-y-1">
-                      {/* Category icon - solo resaltado si NO hay items expandidos de esta categoría */}
-                      <div 
-                        className={`flex items-center justify-center p-3 rounded-lg transition-colors ${
-                          hasCurrentView && !expandedCategories.has(category.id) ? 'bg-blue-100 text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+                      {/* Category icon - clickable to toggle */}
+                      <button
+                        onClick={() => toggleCategory(category.id)}
+                        className={`w-full flex items-center justify-center py-2.5 rounded-lg transition-colors ${
+                          isExpanded ? 'bg-gray-100 text-gray-700' : 'text-gray-600 hover:bg-gray-100'
                         }`}
                         title={category.name}
                       >
-                        <CategoryIcon className="h-6 w-6" />
-                      </div>
-                      
-                      {/* Items icons only if category is expanded and has current view */}
-                      {expandedCategories.has(category.id) && (
-                        <div className="ml-1 space-y-1">
+                        <CategoryIcon className="h-6 w-6 stroke-[1.5]" />
+                      </button>
+
+                      {/* Items icons - only show if category is expanded */}
+                      {isExpanded && (
+                        <div className="space-y-1 ml-0.5">
                           {category.items.map((item) => {
                             const Icon = item.icon;
                             return (
                               <button
                                 key={item.id}
                                 onClick={() => onViewChange(item.id)}
-                                className={`w-full flex items-center justify-center p-2.5 rounded-lg transition-colors ${
+                                className={`w-full flex items-center justify-center py-2.5 rounded-lg transition-colors ${
                                   currentView === item.id
                                     ? 'text-white'
                                     : 'text-gray-600 hover:bg-gray-100'
@@ -431,7 +432,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                                 style={currentView === item.id ? {backgroundColor: '#90c5e7'} : {}}
                                 title={item.name}
                               >
-                                <Icon className="h-5 w-5" />
+                                <Icon className="h-5 w-5 stroke-[1.5]" />
                               </button>
                             );
                           })}
