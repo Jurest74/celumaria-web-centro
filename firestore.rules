@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Users collection - users can read their own document, only they can update it
+    // Only admins can read other users or manage user roles
+    match /users/{userId} {
+      allow read: if isAuthenticated() && 
+        (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && 
+        (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+    
+    // Products - authenticated users can read, only admins can write
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Categories - authenticated users can read, only admins can write
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Purchases - only admins can manage purchases
+    match /purchases/{purchaseId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Sales - authenticated users can read and create, admins can modify
+    match /sales/{saleId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+    
+    // Customers - authenticated users can read and create, admins can modify/delete
+    match /customers/{customerId} {
+      allow read, create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Layaways - authenticated users can read and create, admins can modify
+    match /layaways/{layawayId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+    
+    // Stats - authenticated users can read
+    match /stats/{statId} {
+      allow read: if isAuthenticated();
+    }
+  }
+}
