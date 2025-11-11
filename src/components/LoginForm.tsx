@@ -61,15 +61,16 @@ export function LoginForm() {
       <div className="max-w-md w-full">
         {/* Logo and Header */}
         <div className="text-center mb-8">
-          <div className="w-56 h-32 mx-auto mb-4 flex items-center justify-center overflow-hidden">
-            <img 
-              src="/celumaria.jpeg" 
-              alt="Celu Maria" 
+          <div className="w-56 h-32 mx-auto mb-2 flex items-center justify-center overflow-hidden">
+            <img
+              src="/celumaria.jpeg"
+              alt="Celu Maria"
               className="w-56 h-56 object-cover object-top"
               style={{ background: '#fff' }}
             />
           </div>
-          <p className="text-gray-600">Sistema de Control de Inventario y Ventas</p>
+          <h1 className="text-3xl font-bold mb-2" style={{color: '#90c5e7'}}>Sede Centro</h1>
+          <p className="text-gray-600 text-base">Sistema de Control de Inventario y Ventas</p>
         </div>
 
         {/* Login Form */}

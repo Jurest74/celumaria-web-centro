@@ -88,13 +88,12 @@ export function UserManagement() {
       // Crear una instancia secundaria de Firebase Auth para crear usuarios
       // sin afectar la sesión actual del administrador
       const secondaryApp = initializeApp({
-        apiKey: "AIzaSyDc1KDOerTmt5Lq8M73r_0J-o3JrBiPs_E",
-        authDomain: "celumaria-web.firebaseapp.com",
-        projectId: "celumaria-web",
-        storageBucket: "celumaria-web.firebasestorage.app",
-        messagingSenderId: "917838775068",
-        appId: "1:917838775068:web:cc5644825f6d26d8bdb0d9",
-        measurementId: "G-NJXXNL2Z5L"
+        apiKey: "AIzaSyC2qH28cydE9OKg_9cERvQ3IBRReXHPNLo",
+        authDomain: "finanzas-personales-60d5c.firebaseapp.com",
+        projectId: "finanzas-personales-60d5c",
+        storageBucket: "finanzas-personales-60d5c.firebasestorage.app",
+        messagingSenderId: "1010030707667",
+        appId: "1:1010030707667:web:0a82f7da2be72de30ae526"
       }, 'Secondary');
 
       const secondaryAuth = getAuth(secondaryApp);
