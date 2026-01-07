@@ -552,10 +552,10 @@ export const salesService = {
 
     // Suscribirse a todas las ventas del vendedor y filtrar en el cliente
     // Esto evita problemas de zona horaria y es más confiable
+    // No usamos orderBy para evitar requerir índice compuesto en Firestore
     const q = query(
       collection(db, COLLECTIONS.SALES),
-      where('salesPersonId', '==', salesPersonId),
-      orderBy('createdAt', 'desc')
+      where('salesPersonId', '==', salesPersonId)
     );
 
     return onSnapshot(q, (snapshot) => {
@@ -602,7 +602,19 @@ export const salesService = {
       console.log(`🔥 Ventas del día (filtradas): ${todaySales.length}`);
       console.log(`🔥 Rango del día: ${todayStart.toISOString()} - ${todayEnd.toISOString()}`);
 
-      callback(todaySales);
+      // Ordenar las ventas por fecha de creación (más reciente primero) en el cliente
+      const sortedSales = todaySales.sort((a, b) => {
+        const getTime = (date: any) => {
+          if (!date) return 0;
+          if (typeof date === 'string') return new Date(date).getTime();
+          if (date.toDate && typeof date.toDate === 'function') return date.toDate().getTime();
+          if (date.seconds) return date.seconds * 1000;
+          return 0;
+        };
+        return getTime(b.createdAt) - getTime(a.createdAt); // Descendente
+      });
+
+      callback(sortedSales);
     });
   }
 };
@@ -1129,9 +1141,10 @@ export const statsService = {
     // Separar ventas regulares de abonos y entregas de layaway para cálculo correcto
     const regularSales = sales.filter(sale => !sale.type || sale.type === 'regular');
     const layawayPayments = sales.filter(sale => sale.type === 'layaway_payment');
-    
-    // Total de ventas = ventas regulares + abonos (sin duplicar en entregas)
-    const totalSales = [...regularSales, ...layawayPayments].reduce((sum, sale) => sum + (sale.finalTotal || sale.total), 0);
+    const technicalServicePayments = sales.filter(sale => sale.type === 'technical_service_payment');
+
+    // Total de ventas = ventas regulares + abonos + servicios técnicos (sin duplicar en entregas)
+    const totalSales = [...regularSales, ...layawayPayments, ...technicalServicePayments].reduce((sum, sale) => sum + (sale.finalTotal || sale.total), 0);
     
     // Costos y ganancias incluyen todos los tipos
     const totalCost = sales.reduce((sum, sale) => sum + sale.totalCost, 0);

@@ -234,9 +234,10 @@ export function useStore() {
     // Separar ventas regulares de abonos y entregas de layaway para cálculo correcto
     const regularSales = sales.filter(sale => !sale.type || sale.type === 'regular');
     const layawayPayments = sales.filter(sale => sale.type === 'layaway_payment');
-    
-    // Total de ventas = ventas regulares + abonos (sin duplicar en entregas)
-    const totalSales = [...regularSales, ...layawayPayments].reduce((sum, sale) => sum + sale.total, 0);
+    const technicalServicePayments = sales.filter(sale => sale.type === 'technical_service_payment');
+
+    // Total de ventas = ventas regulares + abonos + servicios técnicos (sin duplicar en entregas)
+    const totalSales = [...regularSales, ...layawayPayments, ...technicalServicePayments].reduce((sum, sale) => sum + sale.total, 0);
     
     // Costos y ganancias incluyen todos los tipos
     const totalCost = sales.reduce((sum, sale) => sum + sale.totalCost, 0);

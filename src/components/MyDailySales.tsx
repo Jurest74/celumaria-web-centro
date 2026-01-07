@@ -144,8 +144,8 @@ export function MyDailySales() {
     myTodaySales.forEach((sale: any) => {
       const saleAmount = sale.finalTotal || sale.total || 0;
 
-      // Servicios técnicos (pero excluir abonos de plan separe mal etiquetados)
-      if (sale.type === 'technical_service_payment' && !sale.isLayaway) {
+      // Servicios técnicos
+      if (sale.type === 'technical_service_payment') {
         technicalServices += saleAmount;
         return;
       }

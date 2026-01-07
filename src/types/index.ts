@@ -95,6 +95,7 @@ export interface Sale {
   salesPersonName?: string; // Nombre del vendedor que realizó la venta
   isLayaway?: boolean; // Indica si es un abono a plan separe
   layawayId?: string; // ID del plan separe si aplica
+  technicalServiceId?: string; // ID del servicio técnico si aplica
   type?: 'regular' | 'layaway_payment' | 'layaway_delivery' | 'technical_service_payment'; // Tipo de venta para reportes
   notes?: string; // Notas adicionales sobre la venta
   technicalServiceDetails?: {

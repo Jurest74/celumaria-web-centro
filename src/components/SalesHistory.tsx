@@ -543,16 +543,16 @@ export function SalesHistory() {
   const exportToCSV = () => {
     const headers = ['Fecha', 'ID Venta', 'Productos', 'Subtotal', 'Descuento', 'Total', 'Costo', 'Ganancia', 'Margen %', 'Método de Pago', 'Vendedor'];
     const csvData = finalPaginatedSales.map(sale => {
-      // Si es abono a plan separe, mostrar "Abono a plan separe" y calcular ganancia/rentabilidad como en el modal
-      if (sale.isLayaway) {
-        const abono = sale.total ?? 0;
+      // Si es abono a plan separe o servicio técnico, calcular ganancia/rentabilidad como en el modal
+      if (sale.type === 'layaway_payment' || sale.type === 'technical_service_payment' || sale.type === 'layaway_delivery') {
+        const pago = sale.total ?? 0;
         const costo = sale.totalCost ?? 0;
-        const ganancia = abono - costo;
+        const ganancia = pago - costo;
         const rentabilidad = costo > 0 ? (ganancia / costo) * 100 : 0;
         return [
           new Date(sale.createdAt).toLocaleDateString(),
           sale.id,
-          sale.type === 'layaway_payment' ? 'Abono a plan separe' : 
+          sale.type === 'layaway_payment' ? 'Abono a plan separe' :
           sale.type === 'technical_service_payment' ? 'Pago servicio técnico' : 'Entrega de plan separe',
           formatCurrencyForExport(sale.subtotal ?? 0),
           formatCurrencyForExport(sale.discount ?? 0),
@@ -1114,8 +1114,9 @@ export function SalesHistory() {
                   </div>
                   
                   <div className="text-xs text-slate-600">
-                    {sale.isLayaway
-                      ? (sale.type === 'layaway_payment' ? 'Abono plan separe' : 'Entrega plan separe')
+                    {sale.type === 'layaway_payment' ? 'Abono plan separe'
+                      : sale.type === 'technical_service_payment' ? 'Servicio técnico'
+                      : sale.type === 'layaway_delivery' ? 'Entrega plan separe'
                       : `${sale.items.length} producto${sale.items.length !== 1 ? 's' : ''}`
                     }
                     {sale.courtesyItems && sale.courtesyItems.length > 0 && (
@@ -1253,16 +1254,16 @@ export function SalesHistory() {
                     {/* Eliminado ID Venta - columna removida para alinear las columnas */}
                     <td className="px-6 py-4">
                       <div className="text-sm text-gray-900">
-                        {sale.isLayaway
-                          ? (sale.type === 'layaway_payment'
-                              ? <span className="text-purple-700 font-semibold">Abono a plan separe</span>
-                              : sale.type === 'technical_service_payment'
-                                ? <span className="text-green-700 font-semibold">Pago servicio técnico</span>
-                                : <span className="text-blue-700 font-semibold">Entrega de plan separe</span>)
-                          : sale.items.slice(0, 2).map((item, index) => (
-                              <div key={index}>{item.quantity}× {item.productName}</div>
-                            ))}
-                        {!sale.isLayaway && sale.items.length > 2 && (
+                        {sale.type === 'layaway_payment'
+                          ? <span className="text-purple-700 font-semibold">Abono a plan separe</span>
+                          : sale.type === 'technical_service_payment'
+                            ? <span className="text-green-700 font-semibold">Pago servicio técnico</span>
+                            : sale.type === 'layaway_delivery'
+                              ? <span className="text-blue-700 font-semibold">Entrega de plan separe</span>
+                              : sale.items.slice(0, 2).map((item, index) => (
+                                  <div key={index}>{item.quantity}× {item.productName}</div>
+                                ))}
+                        {(!sale.type || sale.type === 'regular') && sale.items.length > 2 && (
                           <div className="text-xs text-gray-500">+{sale.items.length - 2} productos más...</div>
                         )}
                         {/* Indicador de cortesías */}
@@ -1507,13 +1508,13 @@ export function SalesHistory() {
                     </div>
                     {/* Items */}
                     <div className="mb-6">
-                      {selectedSale.isLayaway ? (
+                      {(selectedSale.type === 'layaway_payment' || selectedSale.type === 'technical_service_payment' || selectedSale.type === 'layaway_delivery') ? (
                         <>
                           <h4 className={`font-medium mb-3 ${
-                            selectedSale.type === 'layaway_payment' ? 'text-purple-700' : 
+                            selectedSale.type === 'layaway_payment' ? 'text-purple-700' :
                             selectedSale.type === 'technical_service_payment' ? 'text-green-700' : 'text-blue-700'
                           }`}>
-                            {selectedSale.type === 'layaway_payment' ? 'Abono a plan separe' : 
+                            {selectedSale.type === 'layaway_payment' ? 'Abono a plan separe' :
                              selectedSale.type === 'technical_service_payment' ? 'Pago servicio técnico' : 'Entrega de plan separe'}
                           </h4>
 
@@ -1700,15 +1701,17 @@ export function SalesHistory() {
                           return (
                             <div className={`flex justify-between font-bold ${isLoss ? 'text-red-600' : 'text-green-600'}`}>
                               <span>{hasCourtesies ? (isLoss ? 'Pérdida Real:' : 'Ganancia Real:') : 'Ganancia Total:'}</span>
-                              {selectedSale.isLayaway
+                              {(selectedSale.type === 'layaway_payment' || selectedSale.type === 'technical_service_payment')
                                 ? (() => {
-                                    // Cálculo para abonos: ganancia = abono - costo proporcional
-                                    const abono = selectedSale.total ?? 0;
+                                    // Cálculo para abonos y servicios técnicos: ganancia = pago - costo proporcional
+                                    const pago = selectedSale.total ?? 0;
                                     const costo = selectedSale.totalCost ?? 0;
-                                    const ganancia = abono - costo;
+                                    const ganancia = pago - costo;
                                     const rentabilidad = costo > 0 ? (ganancia / costo) * 100 : 0;
                                     return (
-                                      <span className="text-purple-700">+{formatCurrency(ganancia)} ({rentabilidad.toFixed(1)}%)</span>
+                                      <span className={selectedSale.type === 'technical_service_payment' ? 'text-green-700' : 'text-purple-700'}>
+                                        +{formatCurrency(ganancia)} ({rentabilidad.toFixed(1)}%)
+                                      </span>
                                     );
                                   })()
                                 : hasCourtesies
@@ -1958,7 +1961,7 @@ export function SalesHistory() {
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="font-medium text-gray-900">ID: {deleteModal.saleId.substring(0, 8)}...</p>
                 <p className="text-sm text-gray-600">Total: {formatCurrency(deleteModal.saleData.total ?? 0)}</p>
-                {!deleteModal.saleData.isLayaway && (
+                {(!deleteModal.saleData.type || deleteModal.saleData.type === 'regular') && (
                   <p className="text-sm text-gray-600">
                     Productos: {deleteModal.saleData.items.length} artículo{deleteModal.saleData.items.length !== 1 ? 's' : ''}
                   </p>
@@ -1968,8 +1971,8 @@ export function SalesHistory() {
 
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
               <p className="text-sm text-red-800">
-                <strong>⚠️ Atención:</strong> {deleteModal?.saleData?.isLayaway
-                  ? 'Esta acción no se puede deshacer. Se eliminará el abono del plan separe y del historial de ventas.'
+                <strong>⚠️ Atención:</strong> {(deleteModal?.saleData?.type === 'layaway_payment' || deleteModal?.saleData?.type === 'technical_service_payment')
+                  ? `Esta acción no se puede deshacer. Se eliminará ${deleteModal?.saleData?.type === 'technical_service_payment' ? 'el pago del servicio técnico' : 'el abono del plan separe'} y del historial de ventas.`
                   : 'Esta acción no se puede deshacer. Se restaurará el stock de todos los productos vendidos.'}
               </p>
             </div>

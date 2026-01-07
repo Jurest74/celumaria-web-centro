@@ -123,9 +123,8 @@ export function useNavigationData(currentView: string) {
           break;
 
         case 'my-daily-sales':
-          // Invalidar y recargar ventas para ver las del día
-          invalidateCache('sales');
-          await loadSales();
+          // No cargar todas las ventas - MyDailySales usa suscripción optimizada
+          console.log('💰 Vista de mis ventas del día - suscripción optimizada activa');
           break;
 
         case 'purchases':

@@ -1000,9 +1000,8 @@ export function TechnicalService() {
         customerId: technicalService.customerId,
         salesPersonId: appUser?.uid,
         salesPersonName: appUser?.displayName || appUser?.email,
-        isLayaway: true, // Marca como abono (reutilizamos la flag de plan separe)
-        layawayId: technicalService.id, // Referencia al servicio técnico
-        type: 'technical_service_payment' as any, // Nuevo tipo para servicios técnicos
+        technicalServiceId: technicalService.id, // Referencia al servicio técnico
+        type: 'technical_service_payment' as any, // Tipo para servicios técnicos
         notes: `💻 Pago servicio técnico: ${technicalService.deviceBrandModel || 'Dispositivo'} - Cliente: ${technicalService.customerName}${notes ? ` - ${notes}` : ''}`,
         // Información adicional del servicio técnico para mostrar en detalles
         technicalServiceDetails: {
@@ -1020,7 +1019,7 @@ export function TechnicalService() {
       };
 
       await salesService.add(saleData);
-      console.log('Abono de servicio técnico registrado como venta:', saleData);
+      console.log('✅ Abono de servicio técnico registrado como venta');
     } catch (saleError) {
       console.error('Error registrando abono como venta:', saleError);
       // No lanzamos el error para que no falle todo el proceso
@@ -1634,11 +1633,10 @@ export function TechnicalService() {
             const { salesService } = await import('../services/firebase/firestore');
             // Buscar el registro de venta del abono por layawayId, monto y tipo
             const allSales = await salesService.getAll();
-            const abonoSale = allSales.find(sale => 
-              sale.isLayaway && 
-              sale.layawayId === selectedTechnicalService.id && 
-              sale.total === paymentToCancel.amount &&
-              sale.type === 'technical_service_payment'
+            const abonoSale = allSales.find(sale =>
+              sale.type === 'technical_service_payment' &&
+              (sale as any).technicalServiceId === selectedTechnicalService.id &&
+              sale.total === paymentToCancel.amount
             );
             if (abonoSale) {
               await salesService.delete(abonoSale.id);
