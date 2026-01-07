@@ -154,25 +154,20 @@ export function Layaway() {
   const dispatch = useAppDispatch();
   const firebase = useFirebase();
 
-  // Cargar planes separe al cambiar filtro de estado
+  // Cargar todos los planes separe (el filtrado se hace en filteredLayaways)
   useEffect(() => {
     const loadLayaways = async () => {
       try {
-        if (statusFilter === 'all') {
-          const layaways = await layawaysService.getAll();
-          dispatch(fetchLayaways.fulfilled(layaways, '', undefined));
-        } else {
-          const allLayaways = await layawaysService.getAll();
-          const filtered = allLayaways.filter(l => l.status === statusFilter);
-          dispatch(fetchLayaways.fulfilled(filtered, '', undefined));
-        }
+        const layaways = await layawaysService.getAll();
+        console.log('📋 Cargando todos los planes separe:', layaways.length);
+        dispatch(fetchLayaways.fulfilled(layaways, '', undefined));
       } catch (error) {
         console.error('Error loading layaways:', error);
       }
     };
 
     loadLayaways();
-  }, [statusFilter, dispatch]);
+  }, [dispatch]);
   const allLayaways = useAppSelector(selectLayaways);
   const products = useAppSelector(selectProducts);
   const customers = useAppSelector(selectCustomers);
@@ -266,12 +261,15 @@ export function Layaway() {
     }
   };
   
-  // Layaways filtrados por búsqueda y vendedor (estado ya filtrado por Firebase)
+  // Layaways filtrados por estado, vendedor y búsqueda
   const filteredLayaways = useMemo(() => {
     return allLayaways.filter(layaway => {
+      // Filtro por estado
+      if (statusFilter !== 'all' && layaway.status !== statusFilter) return false;
+
       // Filtro por vendedor
       if (salesPersonFilter !== 'all' && layaway.salesPersonId !== salesPersonFilter) return false;
-      
+
       // Filtro por búsqueda (nombre cliente o producto)
       const search = searchTerm.trim().toLowerCase();
       if (!search) return true;
@@ -279,7 +277,7 @@ export function Layaway() {
       const inProducts = layaway.items?.some(item => item.productName?.toLowerCase().includes(search));
       return inCustomer || inProducts;
     });
-  }, [allLayaways, salesPersonFilter, searchTerm]);
+  }, [allLayaways, statusFilter, salesPersonFilter, searchTerm]);
   const forceRefreshLayaway = async (layawayId: string) => {
     try {
       const allLayawaysFromFirebase = await layawaysService.getAll();
