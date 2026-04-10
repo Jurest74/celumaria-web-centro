@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, TrendingUp, PiggyBank, AlertTriangle, AlertCircle, Trash2, Settings, ArrowUpRight, Gift } from 'lucide-react';
+import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, AlertTriangle, AlertCircle, Settings, ArrowUpRight, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectTechnicalServices, selectProducts, selectCustomers } from '../store/selectors';
@@ -269,6 +269,9 @@ export function TechnicalService() {
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [salesPersonFilter, setSalesPersonFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name_az' | 'name_za' | 'total_desc' | 'pending_desc'>('newest');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [availableTechnicians, setAvailableTechnicians] = useState<Technician[]>([]);
   const formRef = useRef<HTMLFormElement>(null);
@@ -806,13 +809,21 @@ export function TechnicalService() {
   
   // Layaways filtrados por búsqueda, estado y vendedor
   const filteredTechnicalServices = useMemo(() => {
-    return allTechnicalServices.filter(layaway => {
+    const filtered = allTechnicalServices.filter(layaway => {
       // Filtro por estado
       if (statusFilter !== 'all' && layaway.status !== statusFilter) return false;
-      
+
       // Filtro por vendedor
       if (salesPersonFilter !== 'all' && layaway.salesPersonId !== salesPersonFilter) return false;
-      
+
+      // Filtro por rango de fechas (usando fecha local para evitar desfase UTC)
+      if (dateFrom || dateTo) {
+        const d = new Date(layaway.createdAt);
+        const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (dateFrom && localDate < dateFrom) return false;
+        if (dateTo && localDate > dateTo) return false;
+      }
+
       // Filtro por búsqueda (ID, nombre cliente o repuesto)
       const search = searchTerm.trim().toLowerCase();
       if (!search) return true;
@@ -821,7 +832,25 @@ export function TechnicalService() {
       const inParts = layaway.items?.some(item => item.partName?.toLowerCase().includes(search));
       return inId || inCustomer || inParts;
     });
-  }, [allTechnicalServices, statusFilter, salesPersonFilter, searchTerm]);
+
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case 'name_az':
+          return (a.customerName || '').localeCompare(b.customerName || '');
+        case 'name_za':
+          return (b.customerName || '').localeCompare(a.customerName || '');
+        case 'total_desc':
+          return (b.totalAmount || 0) - (a.totalAmount || 0);
+        case 'pending_desc':
+          return (b.remainingBalance || 0) - (a.remainingBalance || 0);
+        case 'newest':
+        default:
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+    });
+  }, [allTechnicalServices, statusFilter, salesPersonFilter, searchTerm, sortBy, dateFrom, dateTo]);
   const forceRefreshTechnicalService = async (technicalServiceId: string) => {
     try {
       const allTechnicalServicesFromFirebase = await technicalServicesService.getAll();
@@ -1019,7 +1048,14 @@ export function TechnicalService() {
       };
 
       await salesService.add(saleData);
-      console.log('✅ Abono de servicio técnico registrado como venta');
+      console.log('💻 Abono de servicio técnico registrado como venta:', {
+        type: saleData.type,
+        salesPersonId: saleData.salesPersonId,
+        salesPersonName: saleData.salesPersonName,
+        total: saleData.total,
+        createdAt: saleData.createdAt,
+        technicalServiceId: saleData.technicalServiceId
+      });
     } catch (saleError) {
       console.error('Error registrando abono como venta:', saleError);
       // No lanzamos el error para que no falle todo el proceso
@@ -1833,7 +1869,9 @@ export function TechnicalService() {
   const printCustomerReceipt = (service: TechnicalServicePlan) => {
     const customer = customers.find(c => c.id === service.customerId);
     const totalPaid = service.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
-    const realTotal = service.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (service.laborCost || 0);
+    const realTotal = service.serviceCost !== undefined
+      ? service.serviceCost
+      : service.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (service.laborCost || 0);
     const remainingBalance = realTotal - totalPaid;
     
     const printContent = `
@@ -2343,42 +2381,77 @@ export function TechnicalService() {
 
       {/* Search and Filter - Hidden when creating new plan */}
       {!showCreateForm && (
-        <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-300">
-          <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 md:h-5 md:w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar por ID, cliente o repuesto..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 md:pl-10 pr-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+        <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-300 space-y-3">
+          {/* Fila 1: búsqueda + rango de fechas */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 md:h-5 md:w-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar por ID, cliente o repuesto..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 md:pl-10 pr-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-gray-400 shrink-0" />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                title="Desde"
+              />
+              <span className="text-gray-400 text-sm shrink-0">—</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                title="Hasta"
+              />
+            </div>
           </div>
-          
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] md:min-w-[160px]"
-          >
-            <option value="all">Todos los estados</option>
-            <option value="active">Solo activos</option>
-            <option value="completed">Solo finalizados</option>
-            <option value="cancelled">Solo cancelados</option>
-          </select>
 
-          <select
-            value={salesPersonFilter}
-            onChange={(e) => setSalesPersonFilter(e.target.value)}
-            className="px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] md:min-w-[180px]"
-          >
-            <option value="all">Todos los vendedores</option>
-            {availableUsers.map(user => (
-              <option key={user.uid} value={user.uid}>
-                {user.displayName || user.email}
-              </option>
-            ))}
-          </select>
+          {/* Fila 2: filtros de estado, vendedor y orden */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="flex-1 px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="active">Solo activos</option>
+              <option value="completed">Solo finalizados</option>
+              <option value="cancelled">Solo cancelados</option>
+            </select>
+
+            <select
+              value={salesPersonFilter}
+              onChange={(e) => setSalesPersonFilter(e.target.value)}
+              className="flex-1 px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="all">Todos los vendedores</option>
+              {availableUsers.map(user => (
+                <option key={user.uid} value={user.uid}>
+                  {user.displayName || user.email}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="flex-1 px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="newest">Más recientes</option>
+              <option value="oldest">Más antiguos</option>
+              <option value="name_az">Cliente A-Z</option>
+              <option value="name_za">Cliente Z-A</option>
+              <option value="total_desc">Mayor total</option>
+              <option value="pending_desc">Mayor pendiente</option>
+            </select>
           </div>
         </div>
       )}
@@ -3007,7 +3080,7 @@ export function TechnicalService() {
       {!showCreateForm && (
         <>
           {/* Indicadores de filtros activos */}
-          {(statusFilter !== 'active' || salesPersonFilter !== 'all' || searchTerm.trim()) && (
+          {(statusFilter !== 'active' || salesPersonFilter !== 'all' || searchTerm.trim() || dateFrom || dateTo) && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-blue-800 font-medium">Filtros activos:</span>
@@ -3042,6 +3115,18 @@ export function TechnicalService() {
                     <button
                       onClick={() => setSearchTerm('')}
                       className="ml-1 text-green-600 hover:text-green-800"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+
+                {(dateFrom || dateTo) && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                    Fecha: {dateFrom || '...'} — {dateTo || '...'}
+                    <button
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      className="ml-1 text-purple-600 hover:text-purple-800"
                     >
                       <X className="h-3 w-3" />
                     </button>
