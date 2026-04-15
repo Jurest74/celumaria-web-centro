@@ -14,21 +14,32 @@ import {
   onSnapshot,
   writeBatch,
   increment,
-  serverTimestamp
+  serverTimestamp,
+  waitForPendingWrites
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { COLLECTIONS } from './collections';
-import type { 
-  Product, 
-  Category, 
-  Sale, 
-  Customer, 
+import type {
+  Product,
+  Category,
+  Sale,
+  Customer,
   LayawayPlan,
   TechnicalService,
   DashboardStats,
   Purchase
 } from '../../types';
 import { getColombiaTimestamp } from '../../utils/dateUtils';
+
+// Espera confirmación del servidor con timeout de 15 segundos
+function waitForServerConfirmation(): Promise<void> {
+  return Promise.race([
+    waitForPendingWrites(db),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('No se pudo confirmar el guardado. Verifique su conexión a internet.')), 15000)
+    )
+  ]);
+}
 
 // Categorías predeterminadas definidas aquí directamente
 // CATEGORÍAS PREDETERMINADAS DESHABILITADAS - Celu Maria empezará con base limpia
@@ -334,6 +345,7 @@ export const productsService = {
     }
     
     await batch.commit();
+    await waitForServerConfirmation();
     return productRef.id;
   },
 
@@ -484,6 +496,7 @@ export const salesService = {
     }
 
     await batch.commit();
+    await waitForServerConfirmation();
     return saleRef.id;
   },
 
@@ -527,6 +540,7 @@ export const salesService = {
     }
     
     await batch.commit();
+    await waitForServerConfirmation();
   },
 
   subscribe(callback: (sales: Sale[]) => void) {
@@ -746,6 +760,7 @@ export const layawaysService = {
     }
 
     await batch.commit();
+    await waitForServerConfirmation();
     console.log('✅ Plan separe creado e inventario actualizado exitosamente');
     return layawayRef.id;
   },
@@ -806,6 +821,7 @@ export const layawaysService = {
     }
     
     await batch.commit();
+    await waitForServerConfirmation();
     console.log('✅ Productos agregados al plan separe e inventario actualizado exitosamente');
   },
 
@@ -992,6 +1008,7 @@ export const technicalServicesService = {
       }
 
       await batch.commit();
+      await waitForServerConfirmation();
       console.log('✅ Servicio técnico creado con ID:', technicalServiceRef.id);
       return technicalServiceRef.id;
     } catch (error) {
@@ -1010,6 +1027,7 @@ export const technicalServicesService = {
       };
       
       await updateDoc(technicalServiceRef, cleanTimestamps(updateData));
+      await waitForServerConfirmation();
       console.log('✅ Servicio técnico actualizado');
     } catch (error) {
       console.error('❌ Error actualizando servicio técnico:', error);
@@ -1044,6 +1062,7 @@ export const technicalServicesService = {
       }
       
       await updateDoc(technicalServiceRef, cleanTimestamps(updates));
+      await waitForServerConfirmation();
       console.log('✅ Pago agregado al servicio técnico');
     } catch (error) {
       console.error('❌ Error agregando pago al servicio técnico:', error);
@@ -1234,6 +1253,7 @@ export const purchasesService = {
       }
 
       await batch.commit();
+      await waitForServerConfirmation();
       return purchaseRef.id;
     } catch (error) {
       console.error('Error adding purchase:', error);
