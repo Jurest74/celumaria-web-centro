@@ -135,6 +135,11 @@ export const isValidDateString = (dateString: string): boolean => {
  * Genera un timestamp ISO en UTC (estándar)
  */
 export const getColombiaTimestamp = (): string => {
-  // Usar UTC estándar como todas las otras partes del sistema
-  return new Date().toISOString();
+  // Colombia es UTC-5 y no tiene horario de verano.
+  // Restamos 5h al tiempo UTC para obtener la hora local colombiana,
+  // luego añadimos el offset explícito -05:00 para que new Date() la
+  // interprete siempre correctamente sin importar la zona del dispositivo.
+  const now = new Date();
+  const colombiaMs = now.getTime() - 5 * 60 * 60 * 1000;
+  return new Date(colombiaMs).toISOString().replace('Z', '-05:00');
 };

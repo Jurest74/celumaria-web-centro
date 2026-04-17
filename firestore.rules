@@ -63,5 +63,11 @@ service cloud.firestore {
     match /stats/{statId} {
       allow read: if isAuthenticated();
     }
+
+    // Technical Services - authenticated users can read and create, admins can modify/delete
+    match /technicalservice/{serviceId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
   }
 }
