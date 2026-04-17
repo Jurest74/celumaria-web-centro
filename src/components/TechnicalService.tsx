@@ -1973,7 +1973,7 @@ export function TechnicalService() {
           
           <div class="section">
             <div class="service-info"><span class="label">Servicio #:</span> <span>${service.id}</span></div>
-            <div class="service-info"><span class="label">Fecha de ingreso:</span> <span>${new Date(service.createdAt).toLocaleDateString('es-CO')}</span></div>
+            <div class="service-info"><span class="label">Fecha de ingreso:</span> <span>${new Date(service.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</span></div>
             <div class="service-info"><span class="label">Cliente:</span> <span>${customer?.name || 'N/A'}</span></div>
             ${customer?.phone ? `<div class="service-info"><span class="label">Teléfono:</span> <span>${customer.phone}</span></div>` : ''}
           </div>
@@ -2056,7 +2056,7 @@ export function TechnicalService() {
           
           <div class="section">
             <div><span class="label">ID:</span> ${service.id}</div>
-            <div><span class="label">Fecha:</span> ${new Date(service.createdAt).toLocaleDateString('es-CO')}</div>
+            <div><span class="label">Fecha:</span> ${new Date(service.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</div>
             <div><span class="label">Cliente:</span> ${customer?.name || 'N/A'}</div>
             ${customer?.phone ? `<div><span class="label">Tel:</span> ${customer.phone}</div>` : ''}
           </div>
@@ -3264,7 +3264,7 @@ export function TechnicalService() {
               )}
 
               <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-400 flex items-center justify-between">
-                <div>Creado: {new Date(layaway.createdAt).toLocaleDateString()}</div>
+                <div>Creado: {new Date(layaway.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</div>
                 <div className="flex items-center space-x-2">
                   <span className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded">
                     {layaway.id}
@@ -3798,7 +3798,7 @@ export function TechnicalService() {
                               Agregado por: {item.addedByName}
                               {item.addedAt && (
                                 <span className="ml-2">
-                                  el {new Date(item.addedAt).toLocaleDateString('es-CO')} a las {new Date(item.addedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                                  el {new Date(item.addedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(item.addedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                                 </span>
                               )}
                             </div>
@@ -3807,13 +3807,13 @@ export function TechnicalService() {
                             <div>
                               Estado cambiado por: {item.statusChangedByName}
                               <span className="ml-2">
-                                el {new Date(item.statusChangedAt).toLocaleDateString('es-CO')} a las {new Date(item.statusChangedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                                el {new Date(item.statusChangedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(item.statusChangedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
                           )}
                           {item.installedAt && item.status === 'instalado' && (
                             <div>
-                              Instalado el {new Date(item.installedAt).toLocaleDateString('es-CO')} a las {new Date(item.installedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                              Instalado el {new Date(item.installedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(item.installedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                             </div>
                           )}
                         </div>
@@ -3885,7 +3885,7 @@ export function TechnicalService() {
                         <div className="flex-1">
                           <div className="font-medium">{formatCurrency(payment.amount)}</div>
                           <div className="text-sm text-gray-600">
-                            <div>{new Date(payment.paymentDate).toLocaleDateString()}</div>
+                            <div>{new Date(payment.paymentDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</div>
                             <div>
                               {payment.paymentMethods && payment.paymentMethods.length > 1 
                                 ? (() => {
@@ -3923,7 +3923,7 @@ export function TechnicalService() {
                               Registrado por: {payment.registeredByName}
                               {payment.registeredAt && (
                                 <span className="ml-2">
-                                  el {new Date(payment.registeredAt).toLocaleDateString('es-CO')} a las {new Date(payment.registeredAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                                  el {new Date(payment.registeredAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(payment.registeredAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                                 </span>
                               )}
                             </div>
@@ -4189,7 +4189,7 @@ export function TechnicalService() {
                     <div>
                       <strong>Creado por:</strong> {selectedTechnicalService.salesPersonName}
                       <span className="ml-2 text-gray-400">
-                        el {new Date(selectedTechnicalService.createdAt).toLocaleDateString('es-CO')} a las {new Date(selectedTechnicalService.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                        el {new Date(selectedTechnicalService.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(selectedTechnicalService.createdAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   )}
@@ -4198,7 +4198,7 @@ export function TechnicalService() {
                     <div>
                       <strong>Último cambio de estado por:</strong> {selectedTechnicalService.statusChangedByName}
                       <span className="ml-2 text-gray-400">
-                        el {new Date(selectedTechnicalService.statusChangedAt).toLocaleDateString('es-CO')} a las {new Date(selectedTechnicalService.statusChangedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                        el {new Date(selectedTechnicalService.statusChangedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(selectedTechnicalService.statusChangedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   )}
@@ -4207,7 +4207,7 @@ export function TechnicalService() {
                     <div>
                       <strong>Finalizado por:</strong> {selectedTechnicalService.completedByName}
                       <span className="ml-2 text-gray-400">
-                        el {new Date(selectedTechnicalService.completedAt).toLocaleDateString('es-CO')} a las {new Date(selectedTechnicalService.completedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                        el {new Date(selectedTechnicalService.completedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(selectedTechnicalService.completedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   )}
@@ -4216,7 +4216,7 @@ export function TechnicalService() {
                     <div>
                       <strong>Cancelado por:</strong> {selectedTechnicalService.cancelledByName}
                       <span className="ml-2 text-gray-400">
-                        el {new Date(selectedTechnicalService.statusChangedAt || selectedTechnicalService.updatedAt).toLocaleDateString('es-CO')} a las {new Date(selectedTechnicalService.statusChangedAt || selectedTechnicalService.updatedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                        el {new Date(selectedTechnicalService.statusChangedAt || selectedTechnicalService.updatedAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} a las {new Date(selectedTechnicalService.statusChangedAt || selectedTechnicalService.updatedAt).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   )}
