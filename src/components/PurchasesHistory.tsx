@@ -169,8 +169,8 @@ export function PurchasesHistory() {
   
   const getDateRangeText = () => {
     if (dateFilter === 'custom' && (customDateRange.startDate || customDateRange.endDate)) {
-      const start = customDateRange.startDate ? parseLocalDate(customDateRange.startDate).toLocaleDateString() : 'Inicio';
-      const end = customDateRange.endDate ? parseLocalDate(customDateRange.endDate).toLocaleDateString() : 'Fin';
+      const start = customDateRange.startDate ? parseLocalDate(customDateRange.startDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : 'Inicio';
+      const end = customDateRange.endDate ? parseLocalDate(customDateRange.endDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : 'Fin';
       return `${start} - ${end}`;
     }
     return '';
@@ -179,7 +179,7 @@ export function PurchasesHistory() {
   const exportToCSV = () => {
     const headers = ['Fecha', 'ID Compra', 'Productos', 'Costo Total', 'Total Items', 'Notas'];
     const csvData = finalPaginatedPurchases.map(purchase => [
-      new Date(purchase.createdAt).toLocaleDateString(),
+      new Date(purchase.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }),
       purchase.id,
       purchase.items.map(item => `${formatNumber(item.quantity)}x ${item.productName}`).join('; '),
       formatCurrencyForExport(purchase.totalCost ?? 0),
@@ -700,7 +700,7 @@ export function PurchasesHistory() {
                     >
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         <div className="flex items-center space-x-2">
-                          <span>{purchaseDate ? purchaseDate.toLocaleDateString() : 'Fecha inválida'}</span>
+                          <span>{purchaseDate ? purchaseDate.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : 'Fecha inválida'}</span>
                           {purchaseHasReturns && (
                             <div className="flex items-center">
                               <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
@@ -1061,7 +1061,7 @@ export function PurchasesHistory() {
                 <div>
                   <h3 className="text-xl font-bold text-gray-900">Procesar Devolución</h3>
                   <p className="text-sm text-gray-600">
-                    Compra del {getValidDate(selectedPurchase.createdAt)?.toLocaleDateString()} - 
+                    Compra del {getValidDate(selectedPurchase.createdAt)?.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })} - 
                     ID: {selectedPurchase.id.slice(0, 8)}...
                   </p>
                 </div>

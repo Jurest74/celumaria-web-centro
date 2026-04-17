@@ -1042,7 +1042,7 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleDateString('es-CO', { 
+    return date.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', 
       year: 'numeric', 
       month: 'long', 
       day: 'numeric' 
@@ -1052,7 +1052,7 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
   const formatMonth = (monthStr: string) => {
     const [year, month] = monthStr.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1);
-    return date.toLocaleDateString('es-CO', { 
+    return date.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', 
       year: 'numeric', 
       month: 'long' 
     });

@@ -317,7 +317,7 @@ export function Reports() {
         }
         
         if (!isNaN(dateObj.getTime())) {
-          const dateKey = dateObj.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' });
+          const dateKey = dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', month: 'short', day: 'numeric' });
           
           if (!salesByDate[dateKey]) {
             salesByDate[dateKey] = { revenue: 0, cost: 0, profit: 0, transactions: 0 };
@@ -1057,7 +1057,7 @@ export function Reports() {
                     <div key={date} className="flex justify-between items-center p-4 bg-blue-50 rounded-lg">
                       <div>
                         <div className="font-medium text-gray-900">
-                          {new Date(date).toLocaleDateString('es-ES', { 
+                          {new Date(date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', 
                             weekday: 'long', 
                             year: 'numeric', 
                             month: 'short', 

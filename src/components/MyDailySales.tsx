@@ -335,7 +335,7 @@ export function MyDailySales() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Mis Ventas del Día</h1>
             <p className="text-gray-600 mt-1">
-              Ventas realizadas por {appUser?.displayName || appUser?.email} el {new Date().toLocaleDateString('es-CO')}
+              Ventas realizadas por {appUser?.displayName || appUser?.email} el {new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}
             </p>
           </div>
           <div className="flex items-center space-x-2 text-blue-600">

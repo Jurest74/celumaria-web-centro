@@ -2053,7 +2053,7 @@ export function Layaway() {
               )}
 
               <div className="mt-3 text-xs text-gray-400">
-                Creado: {new Date(layaway.createdAt).toLocaleDateString()}
+                Creado: {new Date(layaway.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}
               </div>
             </div>
           );
@@ -2240,7 +2240,7 @@ export function Layaway() {
                               {item.pickedUpHistory.map((pickup) => (
                                 <div key={pickup.id} className="text-xs text-gray-600 flex justify-between items-center">
                                   <div className="flex-1">
-                                    <span>{pickup.quantity} unidades - {new Date(pickup.date).toLocaleDateString()}</span>
+                                    <span>{pickup.quantity} unidades - {new Date(pickup.date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</span>
                                     {pickup.notes && <span className="italic ml-2">"{pickup.notes}"</span>}
                                   </div>
                                   {selectedLayaway.status === 'active' && pickup.notes !== 'Marcado automáticamente como recogido al completar el pago' && (
@@ -2287,7 +2287,7 @@ export function Layaway() {
                         <div className="flex-1">
                           <div className="font-medium">{formatCurrency(payment.amount)}</div>
                           <div className="text-sm text-gray-600">
-                            <div>{new Date(payment.paymentDate).toLocaleDateString()}</div>
+                            <div>{new Date(payment.paymentDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</div>
                             <div>
                               {payment.paymentMethods && payment.paymentMethods.length > 1 
                                 ? (() => {

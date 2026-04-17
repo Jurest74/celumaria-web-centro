@@ -425,7 +425,7 @@ export function UserManagement() {
                       <span>{user.email}</span>
                     </div>
                     <p className="text-xs text-gray-400">
-                      Creado: {new Date(user.createdAt).toLocaleDateString()}
+                      Creado: {new Date(user.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}
                     </p>
                   </div>
                 </div>

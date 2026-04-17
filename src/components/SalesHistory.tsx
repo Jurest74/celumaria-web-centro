@@ -471,8 +471,8 @@ export function SalesHistory() {
   }
   const getDateRangeText = () => {
     if (dateFilter === 'custom' && (customDateRange.startDate || customDateRange.endDate)) {
-      const start = customDateRange.startDate ? parseLocalDate(customDateRange.startDate).toLocaleDateString() : 'Inicio';
-      const end = customDateRange.endDate ? parseLocalDate(customDateRange.endDate).toLocaleDateString() : 'Fin';
+      const start = customDateRange.startDate ? parseLocalDate(customDateRange.startDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : 'Inicio';
+      const end = customDateRange.endDate ? parseLocalDate(customDateRange.endDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : 'Fin';
       
       let dateText = `${start} - ${end}`;
       
@@ -550,7 +550,7 @@ export function SalesHistory() {
         const ganancia = pago - costo;
         const rentabilidad = costo > 0 ? (ganancia / costo) * 100 : 0;
         return [
-          new Date(sale.createdAt).toLocaleDateString(),
+          new Date(sale.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }),
           sale.id,
           sale.type === 'layaway_payment' ? 'Abono a plan separe' :
           sale.type === 'technical_service_payment' ? 'Pago servicio técnico' : 'Entrega de plan separe',
@@ -566,7 +566,7 @@ export function SalesHistory() {
       }
       // Venta normal
       return [
-        new Date(sale.createdAt).toLocaleDateString(),
+        new Date(sale.createdAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }),
         sale.id,
         sale.items.map(item => `${item.quantity}x ${item.productName}`).join('; '),
         formatCurrencyForExport(sale.subtotal ?? 0),
@@ -1109,7 +1109,7 @@ export function SalesHistory() {
                   <div className="text-xs text-slate-500">
                     {(() => {
                       const dateObj = getValidDate(sale.createdAt);
-                      return dateObj ? dateObj.toLocaleDateString() : '-';
+                      return dateObj ? dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : '-';
                     })()} • {sale.salesPersonName || 'Sin vendedor'}
                   </div>
                   
@@ -1243,8 +1243,8 @@ export function SalesHistory() {
                             const dateObj = getValidDate(sale.createdAt);
                             return (
                               <>
-                                <div className="text-sm font-medium text-gray-900">{dateObj ? dateObj.toLocaleDateString() : '-'}</div>
-                                <div className="text-sm text-gray-500">{dateObj ? dateObj.toLocaleTimeString() : '-'}</div>
+                                <div className="text-sm font-medium text-gray-900">{dateObj ? dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : '-'}</div>
+                                <div className="text-sm text-gray-500">{dateObj ? dateObj.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota' }) : '-'}</div>
                               </>
                             );
                           })()}
@@ -1580,7 +1580,7 @@ export function SalesHistory() {
                                 {selectedSale.technicalServiceDetails.estimatedCompletionDate && (
                                   <div>
                                     <span className="font-medium text-gray-700">Fecha estimada de entrega:</span>
-                                    <div className="text-gray-900">{new Date(selectedSale.technicalServiceDetails.estimatedCompletionDate).toLocaleDateString()}</div>
+                                    <div className="text-gray-900">{new Date(selectedSale.technicalServiceDetails.estimatedCompletionDate).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}</div>
                                   </div>
                                 )}
                               </div>
@@ -2474,7 +2474,7 @@ export function SalesHistory() {
                       <div className="text-xs text-slate-500">
                         {(() => {
                           const dateObj = getValidDate(sale.createdAt);
-                          return dateObj ? dateObj.toLocaleDateString() : '-';
+                          return dateObj ? dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : '-';
                         })()} • {sale.salesPersonName || 'Sin vendedor'}
                       </div>
                       
@@ -2630,8 +2630,8 @@ export function SalesHistory() {
                                 const dateObj = getValidDate(sale.createdAt);
                                 return (
                                   <>
-                                    <div className="text-sm font-medium text-gray-900">{dateObj ? dateObj.toLocaleDateString() : '-'}</div>
-                                    <div className="text-sm text-gray-500">{dateObj ? dateObj.toLocaleTimeString() : '-'}</div>
+                                    <div className="text-sm font-medium text-gray-900">{dateObj ? dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }) : '-'}</div>
+                                    <div className="text-sm text-gray-500">{dateObj ? dateObj.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota' }) : '-'}</div>
                                   </>
                                 );
                               })()}
