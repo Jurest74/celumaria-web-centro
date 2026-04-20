@@ -107,18 +107,26 @@ export function TechnicalService() {
           // Eliminar el producto del servicio técnico
           const newItems = selectedTechnicalService.items.filter((i: any) => i.id !== itemId);
           // Recalcular totales
-          const newTotalAmount = newItems.reduce((sum: number, i: any) => sum + i.totalRevenue, 0);
           const newTotalCost = newItems.reduce((sum: number, i: any) => sum + i.totalCost, 0);
+          const newTotalAmount = newItems.reduce((sum: number, i: any) => sum + i.totalRevenue, 0);
           const newExpectedProfit = newTotalAmount - newTotalCost;
           // Pagos ya realizados
           const totalPaid = selectedTechnicalService.payments.reduce((sum: number, p: any) => sum + p.amount, 0);
           const newRemainingBalance = Math.max(0, newTotalAmount - totalPaid);
+          // Recalcular shares si usa el nuevo sistema de costos
+          const svcCostRemove = selectedTechnicalService.serviceCost;
+          const newLaborCostRemove = svcCostRemove !== undefined ? Math.max(0, svcCostRemove - newTotalCost) : undefined;
           await technicalServicesService.update(selectedTechnicalService.id, {
             items: newItems,
             totalAmount: newTotalAmount,
             totalCost: newTotalCost,
             expectedProfit: newExpectedProfit,
             remainingBalance: newRemainingBalance,
+            ...(newLaborCostRemove !== undefined && {
+              laborCost: newLaborCostRemove,
+              technicianShare: newLaborCostRemove * 0.5,
+              businessShare: newLaborCostRemove * 0.5,
+            }),
             updatedAt: getColombiaTimestamp()
           });
           // Actualizar estado local
@@ -129,6 +137,11 @@ export function TechnicalService() {
             totalCost: newTotalCost,
             expectedProfit: newExpectedProfit,
             remainingBalance: newRemainingBalance,
+            ...(newLaborCostRemove !== undefined && {
+              laborCost: newLaborCostRemove,
+              technicianShare: newLaborCostRemove * 0.5,
+              businessShare: newLaborCostRemove * 0.5,
+            }),
             updatedAt: getColombiaTimestamp()
           });
           showSuccess('Producto eliminado', `El producto fue eliminado y las unidades devueltas al inventario.`);
@@ -440,17 +453,10 @@ export function TechnicalService() {
       return;
     }
 
-    // Verificar si tiene técnico asignado
+    // Verificar si tiene técnico asignado (servicios creados antes de que fuera obligatorio)
     if (!selectedTechnicalService.technicianId) {
-      const confirmed = window.confirm(
-        '⚠️ Este servicio no tiene técnico asignado.\n\n' +
-        'Sin técnico asignado, este servicio no aparecerá en la liquidación de técnicos.\n\n' +
-        '¿Deseas continuar y finalizar el servicio sin técnico asignado?'
-      );
-      
-      if (!confirmed) {
-        return; // El usuario canceló
-      }
+      showError('Técnico requerido', 'Este servicio no tiene técnico asignado. Edita el servicio y asigna un técnico antes de finalizarlo.');
+      return;
     }
 
     try {
@@ -481,11 +487,7 @@ export function TechnicalService() {
       };
       updateTechnicalServiceInState(updatedService);
       
-      if (selectedTechnicalService.technicianId) {
-        showSuccess('Servicio finalizado', `El servicio técnico para ${selectedTechnicalService.customerName} se ha completado exitosamente y aparecerá en la liquidación de técnicos.`);
-      } else {
-        showSuccess('Servicio finalizado', `El servicio técnico para ${selectedTechnicalService.customerName} se ha completado exitosamente (sin técnico asignado).`);
-      }
+      showSuccess('Servicio finalizado', `El servicio técnico para ${selectedTechnicalService.customerName} se ha completado exitosamente y aparecerá en la liquidación de técnicos.`);
       
       // Close modal and refresh data
       setSelectedTechnicalService(null);
@@ -1105,24 +1107,23 @@ export function TechnicalService() {
         return;
       }
 
-      // Validar si no hay técnico asignado o repuestos seleccionados
-      const hasNoTechnician = !assignedTechnicianId;
-      const hasNoParts = createServiceParts.length === 0;
-      
-      if (hasNoTechnician || hasNoParts) {
-        const missingItems = [];
-        if (hasNoTechnician) missingItems.push('técnico asignado');
-        if (hasNoParts) missingItems.push('repuestos');
-        
+      // Técnico es obligatorio
+      if (!assignedTechnicianId) {
+        showError('Técnico requerido', 'Debes asignar un técnico antes de crear el servicio.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Advertir si no hay repuestos (pero no bloquear)
+      if (createServiceParts.length === 0) {
         const confirmed = await new Promise<boolean>((resolve) => {
           showConfirm(
-            'Confirmar creación de servicio técnico',
-            `No has seleccionado ${missingItems.join(' ni ')}. ¿Estás seguro de que quieres continuar con la creación del servicio técnico?`,
+            'Sin repuestos',
+            'No has agregado repuestos al servicio. ¿Deseas continuar de todas formas?',
             () => resolve(true),
             () => resolve(false)
           );
         });
-        
         if (!confirmed) {
           setIsLoading(false);
           return;
@@ -4281,12 +4282,21 @@ export function TechnicalService() {
                   // Actualizar en Firebase
                   const updatedItems = [...selectedTechnicalService.items, newPart];
                   const additionalAmount = newPart.totalCost;
-                  
+                  // Recalcular shares si usa el nuevo sistema de costos
+                  const svcCostAdd = selectedTechnicalService.serviceCost;
+                  const newPartsCostAdd = updatedItems.reduce((sum, i) => sum + i.totalCost, 0);
+                  const newLaborCostAdd = svcCostAdd !== undefined ? Math.max(0, svcCostAdd - newPartsCostAdd) : undefined;
+
                   await technicalServicesService.update(selectedTechnicalService.id, {
                     items: updatedItems,
                     totalAmount: selectedTechnicalService.totalAmount + additionalAmount,
                     totalCost: selectedTechnicalService.totalCost + additionalAmount,
                     remainingBalance: selectedTechnicalService.remainingBalance + additionalAmount,
+                    ...(newLaborCostAdd !== undefined && {
+                      laborCost: newLaborCostAdd,
+                      technicianShare: newLaborCostAdd * 0.5,
+                      businessShare: newLaborCostAdd * 0.5,
+                    }),
                     updatedAt: getColombiaTimestamp()
                   });
 
@@ -4297,6 +4307,11 @@ export function TechnicalService() {
                     totalAmount: selectedTechnicalService.totalAmount + additionalAmount,
                     totalCost: selectedTechnicalService.totalCost + additionalAmount,
                     remainingBalance: selectedTechnicalService.remainingBalance + additionalAmount,
+                    ...(newLaborCostAdd !== undefined && {
+                      laborCost: newLaborCostAdd,
+                      technicianShare: newLaborCostAdd * 0.5,
+                      businessShare: newLaborCostAdd * 0.5,
+                    }),
                     updatedAt: getColombiaTimestamp()
                   };
                   

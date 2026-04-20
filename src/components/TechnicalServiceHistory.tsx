@@ -146,9 +146,9 @@ export function TechnicalServiceHistory() {
       // - technicianShare = 50% de laborCost (para el técnico)
       // - businessShare = 50% de laborCost (ganancia del negocio)
       realTotal = service.serviceCost;
-      laborCost = service.laborCost || Math.max(0, service.serviceCost - partsCost);
-      realCost = partsCost; // Solo los repuestos son costo directo
-      realProfit = service.businessShare || (laborCost * 0.5); // Solo la parte del negocio es ganancia
+      laborCost = service.laborCost ?? Math.max(0, service.serviceCost - partsCost);
+      realCost = partsCost;
+      realProfit = service.businessShare ?? (laborCost * 0.5);
     } else {
       // Sistema anterior para compatibilidad
       laborCost = (service as any).laborCost || 0;
