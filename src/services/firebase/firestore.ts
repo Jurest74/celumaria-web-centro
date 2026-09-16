@@ -732,6 +732,34 @@ export const salesService = {
 };
 
 // Customers Service
+/**
+ * Compromisos vivos de un cliente: planes separe y servicios tecnicos que no
+ * estan cerrados. Se consulta Firestore en el momento, no el store de Redux:
+ * al entrar a la pantalla de Clientes solo se cargan clientes, asi que
+ * cualquier verificacion contra el store leeria un arreglo vacio y dejaria
+ * pasar el borrado.
+ *
+ * Se filtra por customerId (un solo filtro de igualdad, sin indice compuesto)
+ * y el estado se descarta en memoria.
+ */
+export async function compromisosActivosDeCliente(customerId: string): Promise<{
+  planesSepare: number;
+  serviciosTecnicos: number;
+}> {
+  const vivos = (docs: any[], cerrados: string[]) =>
+    docs.filter(d => !cerrados.includes((d.data() as any).status)).length;
+
+  const [layaways, servicios] = await Promise.all([
+    getDocs(query(collection(db, COLLECTIONS.LAYAWAYS), where('customerId', '==', customerId))),
+    getDocs(query(collection(db, COLLECTIONS.TECHNICAL_SERVICES), where('customerId', '==', customerId)))
+  ]);
+
+  return {
+    planesSepare: vivos(layaways.docs, ['completed', 'cancelled']),
+    serviciosTecnicos: vivos(servicios.docs, ['completed', 'cancelled', 'delivered'])
+  };
+}
+
 export const customersService = {
   async getAll(): Promise<Customer[]> {
     const querySnapshot = await getDocs(

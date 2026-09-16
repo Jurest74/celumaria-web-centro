@@ -17,8 +17,8 @@ import {
   ArrowUpRight
 } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { selectCustomers, selectLayaways, selectSales } from '../store/selectors';
-import { customersService } from '../services/firebase/firestore';
+import { selectCustomers, selectSales } from '../store/selectors';
+import { customersService, compromisosActivosDeCliente } from '../services/firebase/firestore';
 import { usePaginatedCustomers } from '../hooks/usePaginatedCustomers';
 import { useNotification } from '../contexts/NotificationContext';
 import { Customer } from '../types';
@@ -43,7 +43,6 @@ import {
 export function Customers() {
   // ⚡ OPTIMIZADO: NO usar listeners - datos se cargan al navegar
   const allCustomers = useAppSelector(selectCustomers);
-  const layaways = useAppSelector(selectLayaways);
   const sales = useAppSelector(selectSales);
   const { showSuccess, showError, showWarning, showConfirm } = useNotification();
 
@@ -216,15 +215,35 @@ export function Customers() {
   };
 
   const handleDelete = useCallback(async (customer: Customer) => {
-    // Verifica si el cliente tiene layaways activos
-    const customerLayaways = layaways.filter(layaway => 
-      layaway.customerId === customer.id && layaway.status === 'active'
-    );
-    
-    if (customerLayaways.length > 0) {
+    // Se consulta Firestore, no el store: al entrar a esta pantalla solo se
+    // cargan clientes, asi que filtrar el arreglo de layaways del store leia
+    // casi siempre un arreglo vacio y la verificacion pasaba sin verificar
+    // nada. Ahora tambien se miran los servicios tecnicos: un cliente con un
+    // equipo en reparacion tampoco se puede borrar.
+    let compromisos;
+    try {
+      compromisos = await compromisosActivosDeCliente(customer.id);
+    } catch (error) {
+      console.error('Error verificando compromisos del cliente:', error);
+      showError(
+        'No se pudo verificar',
+        'No se pudo comprobar si el cliente tiene planes separe o servicios técnicos activos, así que no se eliminó.'
+      );
+      return;
+    }
+
+    const pendientes: string[] = [];
+    if (compromisos.planesSepare > 0) {
+      pendientes.push(`${compromisos.planesSepare} plan(es) separe`);
+    }
+    if (compromisos.serviciosTecnicos > 0) {
+      pendientes.push(`${compromisos.serviciosTecnicos} servicio(s) técnico(s)`);
+    }
+
+    if (pendientes.length > 0) {
       showWarning(
         'No se puede eliminar',
-        `No se puede eliminar este cliente porque tiene ${customerLayaways.length} plan(es) separe activo(s).`
+        `No se puede eliminar este cliente porque tiene ${pendientes.join(' y ')} sin cerrar.`
       );
       return;
     }
@@ -262,7 +281,7 @@ export function Customers() {
         }
       }
     );
-  }, [layaways, refetch, showWarning, showConfirm, showSuccess, showError, setOperationLoadingState]);
+  }, [refetch, showWarning, showConfirm, showSuccess, showError, setOperationLoadingState]);
 
 
 
