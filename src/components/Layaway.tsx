@@ -172,7 +172,7 @@ export function Layaway() {
   const allLayaways = useAppSelector(selectLayaways);
   const products = useAppSelector(selectProducts);
   const customers = useAppSelector(selectCustomers);
-  const { showSuccess, showError, showConfirm } = useNotification();
+  const { showSuccess, showError, showWarning, showConfirm } = useNotification();
   const { appUser } = useAuth();
 
   // Estados locales
@@ -380,7 +380,10 @@ export function Layaway() {
     };
 
     const newRemainingBalance = layaway.remainingBalance - totalAmount;
-    const newStatus = newRemainingBalance === 0 ? 'completed' : layaway.status;
+    // <= 0 y no === 0: con una igualdad exacta, un saldo que quede en
+    // -1 por un sobrepago, o con decimales por un redondeo, dejaba el plan
+    // activo para siempre y sus productos sin entregarse.
+    const newStatus = newRemainingBalance <= 0 ? 'completed' : layaway.status;
     
     // Si el plan se completa, marcar todos los productos como recogidos y registrar ventas reales
     let updatedItems = layaway.items;
@@ -1194,21 +1197,18 @@ export function Layaway() {
       async () => {
         setIsLoading(true);
         try {
-          // Actualizar el stock de cada producto no recogido
-          for (const item of itemsToReturn) {
-            await productsService.updateStock(item.productId, item.quantityToReturn);
-            console.log(`📦 Devolviendo ${item.quantityToReturn} unidades de ${item.productName} al inventario`);
-          }
+          // Estado, devolucion de stock y saldo a favor van en una sola
+          // transaccion: si el plan ya estaba cancelado no se repite nada, asi
+          // que un doble clic o un reintento no devuelven el stock dos veces.
+          const resultado = await layawaysService.cancel(layaway.id);
 
-          // Creditar saldo a favor al cliente si hay dinero cancelado
-          if (moneyRequiringHandling > 0) {
-            // Buscar el cliente
-            const customer = customers.find(c => c.id === layaway.customerId);
-            if (customer) {
-              const newCredit = (customer.credit || 0) + moneyRequiringHandling;
-              // Actualizar en Firestore
-              await customersService.update(customer.id, { credit: newCredit });
-            }
+          if (resultado.yaCancelado) {
+            showWarning(
+              'El plan ya estaba cancelado',
+              'No se hizo ningún cambio: el inventario y el saldo a favor ya se habían ajustado.'
+            );
+            setIsLoading(false);
+            return;
           }
 
           // Actualizar el estado del plan separe
@@ -1226,8 +1226,8 @@ export function Layaway() {
 
           let successMessage = `El plan separe de ${layaway.customerName} se canceló correctamente.`;
 
-          if (totalUnitsToReturn > 0) {
-            successMessage += ` Se devolvieron ${totalUnitsToReturn} unidades al inventario.`;
+          if (resultado.unidadesDevueltas > 0) {
+            successMessage += ` Se devolvieron ${resultado.unidadesDevueltas} unidades al inventario.`;
           }
 
           // Usar los valores calculados previamente para el mensaje de éxito

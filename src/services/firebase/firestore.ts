@@ -843,6 +843,81 @@ export const layawaysService = {
     return layawayRef.id;
   },
 
+  /**
+   * Cancela un plan separe: marca el estado, devuelve al inventario las
+   * unidades no recogidas y acredita al cliente el dinero que no corresponde
+   * a producto entregado. Todo en una transaccion.
+   *
+   * Antes esto ocurria en tres pasos sueltos desde el componente, y en este
+   * orden: devolver stock, acreditar saldo, marcar cancelado. Si el ultimo
+   * paso fallaba, el plan seguia activo con el stock ya devuelto, y el
+   * reintento lo devolvia otra vez; un doble clic hacia lo mismo. Releer el
+   * estado dentro de la transaccion hace que la segunda pasada no haga nada.
+   */
+  async cancel(layawayId: string): Promise<{
+    yaCancelado: boolean;
+    unidadesDevueltas: number;
+    saldoAcreditado: number;
+  }> {
+    return runTransaction(db, async (tx) => {
+      const layawayRef = doc(db, COLLECTIONS.LAYAWAYS, layawayId);
+      const snap = await tx.get(layawayRef);
+      if (!snap.exists()) {
+        throw new Error('Plan separe no encontrado');
+      }
+
+      const plan = snap.data() as LayawayPlan;
+      if (plan.status === 'cancelled') {
+        return { yaCancelado: true, unidadesDevueltas: 0, saldoAcreditado: 0 };
+      }
+
+      const porDevolver = (plan.items || [])
+        .map(item => ({
+          productId: item.productId,
+          cantidad: item.quantity - (item.pickedUpQuantity || 0)
+        }))
+        .filter(x => x.productId && x.cantidad > 0);
+
+      const totalPagado = (plan.payments || []).reduce((sum, pago) => sum + pago.amount, 0);
+      const valorRecogido = (plan.items || []).reduce(
+        (sum, item) => sum + (item.pickedUpQuantity || 0) * (item.productSalePrice || 0),
+        0
+      );
+      const saldoAcreditado = Math.max(0, totalPagado - Math.min(totalPagado, valorRecogido));
+
+      // Todas las lecturas antes de cualquier escritura.
+      const customerRef = plan.customerId
+        ? doc(db, COLLECTIONS.CUSTOMERS, plan.customerId)
+        : null;
+      const customerSnap = saldoAcreditado > 0 && customerRef ? await tx.get(customerRef) : null;
+
+      tx.update(layawayRef, {
+        status: 'cancelled',
+        updatedAt: getColombiaTimestamp()
+      });
+
+      for (const { productId, cantidad } of porDevolver) {
+        tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+          stock: increment(cantidad),
+          updatedAt: getColombiaTimestamp()
+        });
+      }
+
+      if (customerSnap?.exists() && customerRef) {
+        tx.update(customerRef, {
+          credit: ((customerSnap.data() as any).credit || 0) + saldoAcreditado,
+          updatedAt: getColombiaTimestamp()
+        });
+      }
+
+      return {
+        yaCancelado: false,
+        unidadesDevueltas: porDevolver.reduce((sum, x) => sum + x.cantidad, 0),
+        saldoAcreditado: customerSnap?.exists() ? saldoAcreditado : 0
+      };
+    });
+  },
+
   async update(id: string, updates: Partial<LayawayPlan>): Promise<void> {
     console.log('✏️ Actualizando plan separe:', id, updates);
     
