@@ -286,8 +286,8 @@ export function TechnicalServiceHistory() {
       // Filtro de búsqueda
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
-        service.deviceDetails?.toLowerCase().includes(searchLower) ||
-        service.issue?.toLowerCase().includes(searchLower) ||
+        service.deviceBrandModel?.toLowerCase().includes(searchLower) ||
+        service.reportedIssue?.toLowerCase().includes(searchLower) ||
         getCustomerName(service.customerId).toLowerCase().includes(searchLower) ||
         service.id.toLowerCase().includes(searchLower) ||
         service.items?.some(item => 
@@ -843,10 +843,10 @@ export function TechnicalServiceHistory() {
                             </td>
                             <td className="px-6 py-4">
                               <div className="text-sm text-gray-900">
-                                {service.deviceDetails || 'No especificado'}
+                                {service.deviceBrandModel || 'No especificado'}
                               </div>
                               <div className="text-sm text-gray-500">
-                                {service.issue ? service.issue.substring(0, 50) + (service.issue.length > 50 ? '...' : '') : ''}
+                                {service.reportedIssue ? service.reportedIssue.substring(0, 50) + (service.reportedIssue.length > 50 ? '...' : '') : ''}
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
@@ -1290,12 +1290,12 @@ export function TechnicalServiceHistory() {
 
                   <div>
                     <p className="text-sm font-medium text-gray-600">Dispositivo</p>
-                    <p className="text-sm text-gray-900">{selectedService.deviceDetails || 'No especificado'}</p>
+                    <p className="text-sm text-gray-900">{selectedService.deviceBrandModel || 'No especificado'}</p>
                   </div>
 
                   <div>
                     <p className="text-sm font-medium text-gray-600">Problema reportado</p>
-                    <p className="text-sm text-gray-900">{selectedService.issue || 'No especificado'}</p>
+                    <p className="text-sm text-gray-900">{selectedService.reportedIssue || 'No especificado'}</p>
                   </div>
 
                   {selectedService.diagnosis && (

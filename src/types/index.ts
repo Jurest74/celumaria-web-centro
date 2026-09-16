@@ -187,6 +187,24 @@ export interface TechnicalServiceItem {
   statusChangedBy?: string; // ID del usuario que cambió el estado
   statusChangedByName?: string; // Nombre del usuario que cambió el estado
   statusChangedAt?: string; // Fecha y hora del cambio de estado
+
+  // Repuestos ligados a un producto del inventario. Hoy el formulario crea
+  // los repuestos como texto libre (partName + partCost) y no escribe ninguno
+  // de estos campos: quedan de la entrega de productos, que existe en el
+  // codigo pero no tiene como abrirse desde la interfaz. Se declaran
+  // opcionales porque pueden venir en documentos antiguos.
+  productId?: string;
+  productName?: string;
+  productPurchasePrice?: number;
+  productSalePrice?: number;
+  pickedUpQuantity?: number; // Cantidad ya entregada al cliente
+  pickedUpHistory?: Array<{
+    id: string;
+    quantity: number;
+    date: string;
+    notes?: string;
+  }>;
+  name?: string; // Nombre del repuesto en documentos anteriores a partName
 }
 
 export interface LayawayPlan {
@@ -234,6 +252,7 @@ export interface TechnicalService {
   deliveredAt?: string;
   technicianId?: string; // ID del técnico asignado
   technicianName?: string; // Nombre del técnico asignado
+  total?: number; // Total en documentos antiguos; hoy se usa totalAmount
   deviceImei?: string; // IMEI del dispositivo (para celulares)
   deviceBrandModel?: string; // Marca y referencia del equipo
   devicePassword?: string; // Contraseña del equipo

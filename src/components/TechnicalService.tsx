@@ -1530,8 +1530,8 @@ export function TechnicalService() {
         const { salesService } = await import('../services/firebase/firestore');
         
         // Registrar ganancia real al entregar producto
-        const deliveryRevenue = quantityToPickUp * item.productSalePrice;
-        const deliveryCost = quantityToPickUp * item.productPurchasePrice;
+        const deliveryRevenue = quantityToPickUp * (item.productSalePrice || 0);
+        const deliveryCost = quantityToPickUp * (item.productPurchasePrice || 0);
         const deliveryProfit = deliveryRevenue - deliveryCost;
         const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
 
@@ -2169,7 +2169,7 @@ export function TechnicalService() {
       const totalPaid = l.payments.reduce((paymentSum, payment) => paymentSum + payment.amount, 0);
       const pickedUpValue = l.items.reduce((itemSum, item) => {
         const pickedUpQuantity = item.pickedUpQuantity || 0;
-        const itemValue = pickedUpQuantity * item.productSalePrice;
+        const itemValue = pickedUpQuantity * (item.productSalePrice || 0);
         return itemSum + itemValue;
       }, 0);
       
@@ -2183,7 +2183,7 @@ export function TechnicalService() {
       const totalPaid = l.payments.reduce((paymentSum, payment) => paymentSum + payment.amount, 0);
       const pickedUpValue = l.items.reduce((itemSum, item) => {
         const pickedUpQuantity = item.pickedUpQuantity || 0;
-        const itemValue = pickedUpQuantity * item.productSalePrice;
+        const itemValue = pickedUpQuantity * (item.productSalePrice || 0);
         return itemSum + itemValue;
       }, 0);
       
@@ -2198,7 +2198,7 @@ export function TechnicalService() {
       const totalPaid = l.payments.reduce((paymentSum, payment) => paymentSum + payment.amount, 0);
       const pickedUpValue = l.items.reduce((itemSum, item) => {
         const pickedUpQuantity = item.pickedUpQuantity || 0;
-        const itemValue = pickedUpQuantity * item.productSalePrice;
+        const itemValue = pickedUpQuantity * (item.productSalePrice || 0);
         return itemSum + itemValue;
       }, 0);
       
@@ -2212,7 +2212,7 @@ export function TechnicalService() {
       const totalPaid = l.payments.reduce((paymentSum, payment) => paymentSum + payment.amount, 0);
       const pickedUpValue = l.items.reduce((itemSum, item) => {
         const pickedUpQuantity = item.pickedUpQuantity || 0;
-        const itemValue = pickedUpQuantity * item.productSalePrice;
+        const itemValue = pickedUpQuantity * (item.productSalePrice || 0);
         return itemSum + itemValue;
       }, 0);
       
@@ -4065,7 +4065,7 @@ export function TechnicalService() {
                     // Valor de productos recogidos
                     const pickedUpValue = selectedTechnicalService.items.reduce((sum, item) => {
                       const pickedUpQuantity = item.pickedUpQuantity || 0;
-                      return sum + (pickedUpQuantity * item.productSalePrice);
+                      return sum + (pickedUpQuantity * (item.productSalePrice || 0));
                     }, 0);
                     
                     // Dinero que fue a ingresos reales vs que requiere manejo
@@ -4085,7 +4085,7 @@ export function TechnicalService() {
                               <div className="space-y-1">
                                 {pickedUpItems.map(item => {
                                   const pickedUpQuantity = item.pickedUpQuantity || 0;
-                                  const pickedUpItemValue = pickedUpQuantity * item.productSalePrice;
+                                  const pickedUpItemValue = pickedUpQuantity * (item.productSalePrice || 0);
                                   return (
                                     <div key={`picked-${item.id}`} className="text-xs text-green-700">
                                       • {item.productName}: {pickedUpQuantity} unidades ({formatCurrency(pickedUpItemValue)})
@@ -4106,7 +4106,7 @@ export function TechnicalService() {
                               <div className="space-y-1">
                                 {returnedItems.map(item => {
                                   const unPickedQuantity = item.quantity - (item.pickedUpQuantity || 0);
-                                  const returnedValue = unPickedQuantity * item.productSalePrice;
+                                  const returnedValue = unPickedQuantity * (item.productSalePrice || 0);
                                   return (
                                     <div key={`returned-${item.id}`} className="text-xs text-blue-700">
                                       • {item.productName}: {unPickedQuantity} unidades ({formatCurrency(returnedValue)})
