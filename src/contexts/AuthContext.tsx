@@ -3,7 +3,7 @@ import { authService, User } from '../services/firebase/auth';
 import { AppUser, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS, createPermissionHelpers } from '../utils/permissions';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 import { bogotaDateKey } from '../utils/dateUtils';
 
 interface AuthContextType {
@@ -84,7 +84,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.id));
       
       if (userDoc.exists()) {
-        const userData = userDoc.data() as AppUser;
+        // Los documentos creados antes de guardar `uid` no lo traen: sin esto
+        // las ventas de ese usuario quedaban con salesPersonId vacio.
+        const userData = { uid: firebaseUser.id, ...userDoc.data() } as AppUser;
         // Un permiso que no existe en el documento no tiene decision guardada
         // (se agrego despues de crear el usuario): se cae al default del rol.
         const permisosEfectivos = {
@@ -133,8 +135,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const checkSessionDate = async (user: User | null) => {
       if (user) {
         const today = bogotaDateKey();
-        const lastLoginDate = localStorage.getItem('lastLoginDate');
-        // Solo forzar logout si lastLoginDate existe y es diferente a hoy
+        // El día del inicio de sesión sale de Firebase Auth, no de
+        // localStorage. Antes se comparaba con una clave de localStorage: si
+        // no existía (borrada, limpieza del navegador, otra pestaña) la sesión
+        // no se cerraba nunca.
+        const lastSignInTime = auth.currentUser?.metadata.lastSignInTime;
+        const lastLoginDate = lastSignInTime ? bogotaDateKey(new Date(lastSignInTime)) : '';
         if (lastLoginDate && lastLoginDate !== today) {
           await authService.signOut();
           setUser(null);
@@ -173,10 +179,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const user = await authService.signIn(email, password);
       if (user) {
         setUser(user);
-        // Guardar la fecha de login en localStorage (formato YYYY-MM-DD)
-        const today = bogotaDateKey();
-        localStorage.setItem('lastLoginDate', today);
-        
         // Verificar notificaciones de cumpleaños solo en login genuino
         checkBirthdayNotification(true);
         

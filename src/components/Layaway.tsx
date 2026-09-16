@@ -3,7 +3,7 @@ import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Cl
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectLayaways, selectProducts, selectCustomers } from '../store/selectors';
-import { layawaysService, productsService, registrarPago } from '../services/firebase/firestore';
+import { layawaysService, registrarPago, actualizarEnTransaccion, buscarVentaDePago, buscarVentasDeEntrega } from '../services/firebase/firestore';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { customersService } from '../services/firebase/firestore';
 import { LayawayPlan, LayawayItem, PaymentMethod } from '../types';
@@ -85,40 +85,55 @@ export function Layaway() {
       async () => {
         setIsLoading(true);
         try {
-          // Actualizar inventario usando el servicio correcto
-          await productsService.updateStock(item.productId, unPickedQuantity);
-          // Eliminar el producto del plan separe
-          const newItems = selectedLayaway.items.filter((i: any) => i.id !== itemId);
-          // Recalcular totales
-          const newTotalAmount = newItems.reduce((sum: number, i: any) => sum + i.totalRevenue, 0);
-          const newTotalCost = newItems.reduce((sum: number, i: any) => sum + i.totalCost, 0);
-          const newExpectedProfit = newTotalAmount - newTotalCost;
-          // Pagos ya realizados
-          const totalPaid = selectedLayaway.payments.reduce((sum: number, p: any) => sum + p.amount, 0);
-          const newRemainingBalance = Math.max(0, newTotalAmount - totalPaid);
-          await layawaysService.update(selectedLayaway.id, {
-            items: newItems,
-            totalAmount: newTotalAmount,
-            totalCost: newTotalCost,
-            expectedProfit: newExpectedProfit,
-            remainingBalance: newRemainingBalance,
-            updatedAt: new Date().toISOString()
-          });
+          // Devolver el stock y sacar el producto del plan van en una sola
+          // transaccion, calculada sobre el plan guardado. Antes el stock se
+          // devolvia primero y el plan se guardaba despues desde la copia de
+          // la pantalla: si lo segundo fallaba el stock quedaba devuelto con
+          // el producto aun en el plan, y un segundo equipo podia pisar
+          // cambios.
+          const updatedLayaway = await actualizarEnTransaccion<LayawayPlan, LayawayPlan>(
+            COLLECTIONS.LAYAWAYS,
+            selectedLayaway.id,
+            (actual) => {
+              const itemActual = actual.items.find(i => i.id === itemId);
+              if (!itemActual) {
+                throw new Error('El producto ya no está en el plan separe. Recarga el plan.');
+              }
+              const noRecogidas = itemActual.quantity - (itemActual.pickedUpQuantity || 0);
+              if (noRecogidas <= 0) {
+                throw new Error('Ese producto ya fue recogido por completo. Recarga el plan.');
+              }
+
+              const newItems = actual.items.filter(i => i.id !== itemId);
+              // Recalcular totales
+              const newTotalAmount = newItems.reduce((sum, i) => sum + i.totalRevenue, 0);
+              const newTotalCost = newItems.reduce((sum, i) => sum + i.totalCost, 0);
+              const newExpectedProfit = newTotalAmount - newTotalCost;
+              // Pagos ya realizados
+              const totalPaid = (actual.payments || []).reduce((sum, p) => sum + p.amount, 0);
+              const newRemainingBalance = Math.max(0, newTotalAmount - totalPaid);
+
+              const cambios = {
+                items: newItems,
+                totalAmount: newTotalAmount,
+                totalCost: newTotalCost,
+                expectedProfit: newExpectedProfit,
+                remainingBalance: newRemainingBalance
+              };
+              return {
+                cambios,
+                stock: [{ productId: itemActual.productId, cambio: noRecogidas }],
+                resultado: { ...actual, ...cambios, updatedAt: new Date().toISOString() }
+              };
+            }
+          );
           // Actualizar estado local
-          updateLayawayInState({
-            ...selectedLayaway,
-            items: newItems,
-            totalAmount: newTotalAmount,
-            totalCost: newTotalCost,
-            expectedProfit: newExpectedProfit,
-            remainingBalance: newRemainingBalance,
-            updatedAt: new Date().toISOString()
-          });
+          updateLayawayInState(updatedLayaway);
           showSuccess('Producto eliminado', `El producto fue eliminado y las unidades devueltas al inventario.`);
           dispatch(fetchProducts());
           dispatch(fetchLayaways());
         } catch (error) {
-          showError('Error', 'No se pudo eliminar el producto.');
+          showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo eliminar el producto.');
         } finally {
           setIsLoading(false);
         }
@@ -378,19 +393,21 @@ export function Layaway() {
 
       // Si el plan se completa, marcar todos los productos como recogidos y registrar ventas reales
       let updatedItems = actual.items;
-      const autoDeliveryItems: (LayawayItem & { deliveredQuantity: number })[] = [];
+      const autoDeliveryItems: (LayawayItem & { deliveredQuantity: number; pickupId: string })[] = [];
       if (newStatus === 'completed') {
         updatedItems = actual.items.map(item => {
           const remainingQuantity = item.quantity - (item.pickedUpQuantity || 0);
           if (remainingQuantity > 0) {
+            const pickupId = crypto.randomUUID();
             // Guardar info para registrar venta real después
             autoDeliveryItems.push({
               ...item,
-              deliveredQuantity: remainingQuantity
+              deliveredQuantity: remainingQuantity,
+              pickupId
             });
 
             const newPickupRecord = {
-              id: crypto.randomUUID(),
+              id: pickupId,
               quantity: remainingQuantity,
               date: new Date().toISOString(),
               notes: 'Marcado automáticamente como recogido al completar el pago'
@@ -493,6 +510,8 @@ export function Layaway() {
           customerId: actual.customerId,
           isLayaway: true,
           layawayId: actual.id,
+          // Liga la entrega con su recogida para poder borrarla si se revierte.
+          pickupId: item.pickupId,
           type: 'layaway_delivery', // Solo para tracking de entregas
           notes: `✅ Entrega plan separe: ${item.deliveredQuantity} x ${item.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada`
         });
@@ -859,94 +878,85 @@ export function Layaway() {
         return;
       }
 
-      // Actualizar en Firebase
-      await layawaysService.update(layaway.id, {
-        items: layaway.items.map((i: LayawayItem) => {
-          if (i.id === item.id) {
-            const newPickupRecord = {
-              id: crypto.randomUUID(),
-              quantity: quantityToPickUp,
-              date: new Date().toISOString(),
-              notes
-            };
-
-            return {
-              ...i,
-              pickedUpQuantity: (i.pickedUpQuantity || 0) + quantityToPickUp,
-              pickedUpHistory: [...(i.pickedUpHistory || []), newPickupRecord]
-            };
+      // La recogida y su registro de entrega en ventas van en una sola
+      // transaccion, calculada sobre el plan guardado. Antes se reescribian
+      // los items desde la copia de la pantalla (un segundo equipo podia
+      // borrar una recogida) y la entrega se guardaba aparte, tragandose el
+      // error.
+      const updatedLayaway = await actualizarEnTransaccion<LayawayPlan, LayawayPlan>(
+        COLLECTIONS.LAYAWAYS,
+        layaway.id,
+        (actual) => {
+          const itemActual = actual.items.find(i => i.id === item.id);
+          if (!itemActual) {
+            throw new Error('El producto ya no está en el plan separe. Recarga el plan.');
           }
-          return i;
-        })
-      });
+          const maxActual = itemActual.quantity - (itemActual.pickedUpQuantity || 0);
+          if (quantityToPickUp > maxActual) {
+            throw new Error(
+              `Solo quedan ${formatNumber(maxActual)} unidades por recoger de "${itemActual.productName}" ` +
+              '(puede que se hayan recogido desde otro equipo). Recarga el plan.'
+            );
+          }
 
-      // Registrar venta real por productos entregados
-      try {
-        const { salesService } = await import('../services/firebase/firestore');
-        
-        // Registrar ganancia real al entregar producto
-        const deliveryRevenue = quantityToPickUp * item.productSalePrice;
-        const deliveryCost = quantityToPickUp * item.productPurchasePrice;
-        const deliveryProfit = deliveryRevenue - deliveryCost;
-        const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
-
-        const deliverySaleData = {
-          items: [{
-            productId: item.productId,
-            productName: item.productName,
-            quantity: quantityToPickUp, // Cantidad real entregada
-            purchasePrice: item.productPurchasePrice,
-            salePrice: item.productSalePrice,
-            totalCost: deliveryCost, // ← Costo real del producto entregado
-            totalRevenue: 0, // ← No revenue adicional (ya se contó en abono)
-            profit: deliveryProfit // ← Ganancia real materializada
-          }],
-          subtotal: 0, // ← No revenue adicional
-          discount: 0,
-          tax: 0,
-          total: 0, // ← No dinero adicional (solo ganancia)
-          totalCost: deliveryCost, // ← Costo real
-          totalProfit: deliveryProfit, // ← Ganancia real materializada
-          profitMargin: deliveryMargin, // ← Margen real
-          paymentMethod: 'efectivo' as 'efectivo',
-          paymentMethods: [{ method: 'efectivo' as 'efectivo', amount: 0 }],
-          customerName: layaway.customerName,
-          customerId: layaway.customerId,
-          isLayaway: true,
-          layawayId: layaway.id,
-          type: 'layaway_delivery' as 'layaway_delivery', // Solo para tracking de entregas
-          notes: `✅ Entrega plan separe: ${quantityToPickUp} x ${item.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada${notes ? ` - ${notes}` : ''}`
-        };
-
-        await salesService.add(deliverySaleData);
-      } catch (err) {
-        console.error('Error registrando venta de entrega:', err);
-      }
-
-      // Actualizar estado local inmediatamente
-      const updatedItems = layaway.items.map((i: LayawayItem) => {
-        if (i.id === item.id) {
           const newPickupRecord = {
             id: crypto.randomUUID(),
             quantity: quantityToPickUp,
             date: new Date().toISOString(),
             notes
           };
+          const updatedItems = actual.items.map(i => i.id === item.id
+            ? {
+                ...i,
+                pickedUpQuantity: (i.pickedUpQuantity || 0) + quantityToPickUp,
+                pickedUpHistory: [...(i.pickedUpHistory || []), newPickupRecord]
+              }
+            : i
+          );
+
+          // Registrar ganancia real al entregar producto
+          const deliveryRevenue = quantityToPickUp * itemActual.productSalePrice;
+          const deliveryCost = quantityToPickUp * itemActual.productPurchasePrice;
+          const deliveryProfit = deliveryRevenue - deliveryCost;
+          const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
+
+          const deliverySaleData = {
+            items: [{
+              productId: itemActual.productId,
+              productName: itemActual.productName,
+              quantity: quantityToPickUp, // Cantidad real entregada
+              purchasePrice: itemActual.productPurchasePrice,
+              salePrice: itemActual.productSalePrice,
+              totalCost: deliveryCost, // ← Costo real del producto entregado
+              totalRevenue: 0, // ← No revenue adicional (ya se contó en abono)
+              profit: deliveryProfit // ← Ganancia real materializada
+            }],
+            subtotal: 0, // ← No revenue adicional
+            discount: 0,
+            tax: 0,
+            total: 0, // ← No dinero adicional (solo ganancia)
+            totalCost: deliveryCost, // ← Costo real
+            totalProfit: deliveryProfit, // ← Ganancia real materializada
+            profitMargin: deliveryMargin, // ← Margen real
+            paymentMethod: 'efectivo',
+            paymentMethods: [{ method: 'efectivo', amount: 0 }],
+            customerName: actual.customerName,
+            customerId: actual.customerId,
+            isLayaway: true,
+            layawayId: actual.id,
+            // Liga la entrega con su recogida para poder borrarla si se revierte.
+            pickupId: newPickupRecord.id,
+            type: 'layaway_delivery', // Solo para tracking de entregas
+            notes: `✅ Entrega plan separe: ${quantityToPickUp} x ${itemActual.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada${notes ? ` - ${notes}` : ''}`
+          };
 
           return {
-            ...i,
-            pickedUpQuantity: (i.pickedUpQuantity || 0) + quantityToPickUp,
-            pickedUpHistory: [...(i.pickedUpHistory || []), newPickupRecord]
+            cambios: { items: updatedItems },
+            ventas: [deliverySaleData],
+            resultado: { ...actual, items: updatedItems, updatedAt: new Date().toISOString() }
           };
         }
-        return i;
-      });
-
-      const updatedLayaway: LayawayPlan = {
-        ...layaway,
-        items: updatedItems,
-        updatedAt: new Date().toISOString()
-      };
+      );
 
       updateLayawayInState(updatedLayaway);
       
@@ -962,7 +972,7 @@ export function Layaway() {
 
     } catch (error) {
       console.error('Error marking as picked up:', error);
-      showError('Error al marcar como recogido', 'No se pudo actualizar el estado. Inténtalo de nuevo.');
+      showError('Error al marcar como recogido', error instanceof Error && error.message ? error.message : 'No se pudo actualizar el estado. Inténtalo de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -980,66 +990,113 @@ export function Layaway() {
       async () => {
         setIsLoading(true);
         try {
-          // Filtrar el pago cancelado
-          const updatedPayments = selectedLayaway.payments.filter(p => p.id !== paymentId);
-          // Recalcular saldo pendiente
-          const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-          const newRemainingBalance = selectedLayaway.totalAmount - totalPaid;
-          // Si el plan estaba completado y ahora tiene saldo pendiente, cambiar status a active y revertir productos marcados automáticamente como recogidos
-          let newStatus = selectedLayaway.status;
-          let updatedItems = selectedLayaway.items;
-          if (selectedLayaway.status === 'completed' && newRemainingBalance > 0) {
-            newStatus = 'active';
-            updatedItems = selectedLayaway.items.map(item => {
-              const manualPickupHistory = item.pickedUpHistory?.filter(
-                pickup => pickup.notes !== 'Marcado automáticamente como recogido al completar el pago'
-              ) || [];
-              const manualPickedUpQuantity = manualPickupHistory.reduce(
-                (sum, pickup) => sum + pickup.quantity, 0
-              );
-              return {
-                ...item,
-                pickedUpQuantity: manualPickedUpQuantity,
-                pickedUpHistory: manualPickupHistory
-              };
-            });
-          }
-          // Actualizar en Firebase el plan separe
-          const updateData: any = {
-            payments: updatedPayments,
-            remainingBalance: newRemainingBalance,
-            status: newStatus
-          };
-          if (newStatus === 'active' && selectedLayaway.status === 'completed') {
-            updateData.items = updatedItems;
-          }
-          await layawaysService.update(selectedLayaway.id, updateData);
-          // Eliminar el abono correspondiente en la colección de ventas
-          try {
-            const { salesService } = await import('../services/firebase/firestore');
-            // Buscar el registro de venta del abono por layawayId y monto
-            const allSales = await salesService.getAll();
-            const abonoSale = allSales.find(sale => sale.isLayaway && sale.layawayId === selectedLayaway.id && sale.total === paymentToCancel.amount);
-            if (abonoSale) {
-              await salesService.delete(abonoSale.id);
+          const RECOGIDA_AUTOMATICA = 'Marcado automáticamente como recogido al completar el pago';
+
+          // Las consultas no pueden ir dentro de la transaccion: se buscan
+          // antes la venta del abono y las entregas de las recogidas
+          // automaticas que se revertirian si el plan vuelve a quedar activo.
+          const abonoSaleId = await buscarVentaDePago({ layawayId: selectedLayaway.id }, paymentToCancel);
+          const { ventaPorRecogida, sinIdentificar: entregasSinIdentificar } = await buscarVentasDeEntrega(
+            selectedLayaway.id,
+            selectedLayaway.items.flatMap(item =>
+              (item.pickedUpHistory || [])
+                .filter(pickup => pickup.notes === RECOGIDA_AUTOMATICA)
+                .map(pickup => ({ pickupId: pickup.id, productId: item.productId, quantity: pickup.quantity, date: pickup.date }))
+            )
+          );
+
+          // Plan, venta del abono y entregas revertidas en una sola
+          // transaccion, calculada sobre el plan guardado. Antes se reescribia
+          // `payments` desde la copia de la pantalla, la venta se borraba
+          // aparte tragandose el error, y las entregas de las recogidas
+          // revertidas quedaban: al volver a completar el plan la ganancia se
+          // contaba dos veces.
+          const { updatedLayaway, newStatus, previousStatus, newRemainingBalance } = await actualizarEnTransaccion<LayawayPlan, {
+            updatedLayaway: LayawayPlan;
+            newStatus: LayawayPlan['status'];
+            previousStatus: LayawayPlan['status'];
+            newRemainingBalance: number;
+          }>(COLLECTIONS.LAYAWAYS, selectedLayaway.id, (actual) => {
+            if (!(actual.payments || []).some(p => p.id === paymentId)) {
+              throw new Error('Ese pago ya no está en el plan separe (puede que lo hayan cancelado desde otro equipo). Recarga el plan.');
             }
-          } catch (err) {
-            console.error('Error eliminando abono en ventas:', err);
+
+            // Filtrar el pago cancelado
+            const updatedPayments = actual.payments.filter(p => p.id !== paymentId);
+            // Recalcular saldo pendiente
+            const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newRemainingBalance = actual.totalAmount - totalPaid;
+            // Si el plan estaba completado y ahora tiene saldo pendiente, cambiar status a active y revertir productos marcados automáticamente como recogidos
+            let newStatus = actual.status;
+            let updatedItems = actual.items;
+            const ventasABorrar = abonoSaleId ? [abonoSaleId] : [];
+            if (actual.status === 'completed' && newRemainingBalance > 0) {
+              newStatus = 'active';
+              updatedItems = actual.items.map(item => {
+                const history = item.pickedUpHistory || [];
+                for (const pickup of history) {
+                  if (pickup.notes === RECOGIDA_AUTOMATICA && ventaPorRecogida[pickup.id]) {
+                    ventasABorrar.push(ventaPorRecogida[pickup.id]);
+                  }
+                }
+                const manualPickupHistory = history.filter(pickup => pickup.notes !== RECOGIDA_AUTOMATICA);
+                const manualPickedUpQuantity = manualPickupHistory.reduce(
+                  (sum, pickup) => sum + pickup.quantity, 0
+                );
+                return {
+                  ...item,
+                  pickedUpQuantity: manualPickedUpQuantity,
+                  pickedUpHistory: manualPickupHistory
+                };
+              });
+            }
+
+            const cambios: Record<string, unknown> = {
+              payments: updatedPayments,
+              remainingBalance: newRemainingBalance,
+              status: newStatus
+            };
+            if (newStatus === 'active' && actual.status === 'completed') {
+              cambios.items = updatedItems;
+            }
+
+            return {
+              cambios,
+              ventasABorrar,
+              resultado: {
+                updatedLayaway: {
+                  ...actual,
+                  payments: updatedPayments,
+                  remainingBalance: newRemainingBalance,
+                  status: newStatus,
+                  items: updatedItems,
+                  updatedAt: new Date().toISOString()
+                },
+                newStatus,
+                previousStatus: actual.status,
+                newRemainingBalance
+              }
+            };
+          });
+
+          if (newStatus === 'active' && previousStatus === 'completed' && entregasSinIdentificar > 0) {
+            showWarning(
+              'Entregas no identificadas',
+              `Se revirtieron las recogidas automáticas, pero ${entregasSinIdentificar} registro(s) de entrega no se pudieron identificar en Gestión de Ventas. Revísalos allí para que la ganancia no quede contada dos veces.`
+            );
+          }
+          if (!abonoSaleId) {
+            showWarning(
+              'Abono no encontrado en ventas',
+              'El pago se canceló en el plan separe, pero no se encontró su registro en Gestión de Ventas. Revísalo allí.'
+            );
           }
           // Actualizar estado local inmediatamente
-          const updatedLayaway: LayawayPlan = {
-            ...selectedLayaway,
-            payments: updatedPayments,
-            remainingBalance: newRemainingBalance,
-            status: newStatus,
-            items: updatedItems,
-            updatedAt: new Date().toISOString()
-          };
           updateLayawayInState(updatedLayaway);
           showSuccess(
             'Pago cancelado',
             `El pago de ${formatCurrency(paymentToCancel.amount)} ha sido cancelado y el abono eliminado del historial de ventas. ${
-              newStatus === 'active' && selectedLayaway.status === 'completed'
+              newStatus === 'active' && previousStatus === 'completed'
                 ? 'El plan separe ha vuelto a estado activo y se han revertido las recogidas automáticas.'
                 : `Nuevo saldo pendiente: ${formatCurrency(newRemainingBalance)}`
             }`
@@ -1049,7 +1106,7 @@ export function Layaway() {
           dispatch(fetchLayaways());
         } catch (error) {
           console.error('Error cancelling payment:', error);
-          showError('Error al cancelar pago', 'No se pudo cancelar el pago. Inténtalo de nuevo.');
+          showError('Error al cancelar pago', error instanceof Error && error.message ? error.message : 'No se pudo cancelar el pago. Inténtalo de nuevo.');
         } finally {
           setIsLoading(false);
         }
@@ -1072,59 +1129,76 @@ export function Layaway() {
       async () => {
         setIsLoading(true);
         try {
-          // Actualizar los items removiendo la recogida específica
-          const updatedItems = selectedLayaway.items.map(i => {
-            if (i.id === itemId) {
-              // Filtrar la recogida que se va a revertir
-              const updatedPickupHistory = i.pickedUpHistory?.filter(p => p.id !== pickupId) || [];
-              
-              // Recalcular cantidad recogida
-              const newPickedUpQuantity = updatedPickupHistory.reduce(
-                (sum, pickup) => sum + pickup.quantity, 0
-              );
+          // La consulta no puede ir dentro de la transaccion: se busca antes
+          // el registro de entrega de esta recogida.
+          const { ventaPorRecogida, sinIdentificar } = await buscarVentasDeEntrega(selectedLayaway.id, [{
+            pickupId: pickupToRevert.id,
+            productId: item.productId,
+            quantity: pickupToRevert.quantity,
+            date: pickupToRevert.date
+          }]);
 
-              return {
-                ...i,
-                pickedUpQuantity: newPickedUpQuantity,
-                pickedUpHistory: updatedPickupHistory
-              };
+          // Recogida y registro de entrega en una sola transaccion, calculada
+          // sobre el plan guardado. Antes la entrega quedaba: al volver a
+          // recoger se creaba otra y la ganancia se contaba dos veces.
+          const { updatedLayaway, newStatus, previousStatus } = await actualizarEnTransaccion<LayawayPlan, {
+            updatedLayaway: LayawayPlan;
+            newStatus: LayawayPlan['status'];
+            previousStatus: LayawayPlan['status'];
+          }>(COLLECTIONS.LAYAWAYS, selectedLayaway.id, (actual) => {
+            const itemActual = actual.items.find(i => i.id === itemId);
+            if (!itemActual?.pickedUpHistory?.some(p => p.id === pickupId)) {
+              throw new Error('Esa recogida ya no está en el plan separe (puede que la hayan revertido desde otro equipo). Recarga el plan.');
             }
-            return i;
+
+            // Actualizar los items removiendo la recogida específica
+            const updatedItems = actual.items.map(i => {
+              if (i.id === itemId) {
+                const updatedPickupHistory = i.pickedUpHistory?.filter(p => p.id !== pickupId) || [];
+                const newPickedUpQuantity = updatedPickupHistory.reduce(
+                  (sum, pickup) => sum + pickup.quantity, 0
+                );
+                return {
+                  ...i,
+                  pickedUpQuantity: newPickedUpQuantity,
+                  pickedUpHistory: updatedPickupHistory
+                };
+              }
+              return i;
+            });
+
+            // Si el plan estaba completado y ahora tiene productos sin recoger completamente,
+            // cambiar status a active
+            let newStatus = actual.status;
+            const hasUnpickedItems = updatedItems.some(i => (i.pickedUpQuantity || 0) < i.quantity);
+            if (actual.status === 'completed' && hasUnpickedItems) {
+              newStatus = 'active';
+            }
+
+            return {
+              cambios: { items: updatedItems, status: newStatus },
+              ventasABorrar: ventaPorRecogida[pickupId] ? [ventaPorRecogida[pickupId]] : [],
+              resultado: {
+                updatedLayaway: { ...actual, items: updatedItems, status: newStatus, updatedAt: new Date().toISOString() },
+                newStatus,
+                previousStatus: actual.status
+              }
+            };
           });
 
-          // Si el plan estaba completado y ahora tiene productos sin recoger completamente,
-          // cambiar status a active
-          let newStatus = selectedLayaway.status;
-          const hasUnpickedItems = updatedItems.some(item => 
-            (item.pickedUpQuantity || 0) < item.quantity
-          );
-
-          if (selectedLayaway.status === 'completed' && hasUnpickedItems) {
-            newStatus = 'active';
+          if (sinIdentificar > 0) {
+            showWarning(
+              'Registro de entrega no identificado',
+              'La recogida se revirtió, pero no se pudo identificar su registro de entrega en Gestión de Ventas. Revísalo allí para que la ganancia no quede contada.'
+            );
           }
-
-          // Actualizar en Firebase
-          const updateData: any = {
-            items: updatedItems,
-            status: newStatus
-          };
-
-          await layawaysService.update(selectedLayaway.id, updateData);
-
-          // Actualizar estado local inmediatamente
-          const updatedLayaway: LayawayPlan = {
-            ...selectedLayaway,
-            items: updatedItems,
-            status: newStatus,
-            updatedAt: new Date().toISOString()
-          };
 
           updateLayawayInState(updatedLayaway);
           
           showSuccess(
             'Recogida revertida',
             `Se ha revertido la recogida de ${pickupToRevert.quantity} unidades de "${item.productName}". ${
-              newStatus === 'active' && selectedLayaway.status === 'completed'
+              newStatus === 'active' && previousStatus === 'completed'
                 ? 'El plan separe ha vuelto a estado activo.'
                 : 'Las unidades están disponibles para recoger nuevamente.'
             }`
@@ -1136,7 +1210,7 @@ export function Layaway() {
 
         } catch (error) {
           console.error('Error reverting pickup:', error);
-          showError('Error al revertir recogida', 'No se pudo revertir la recogida. Inténtalo de nuevo.');
+          showError('Error al revertir recogida', error instanceof Error && error.message ? error.message : 'No se pudo revertir la recogida. Inténtalo de nuevo.');
         } finally {
           setIsLoading(false);
         }

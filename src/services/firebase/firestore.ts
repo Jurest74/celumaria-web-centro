@@ -29,7 +29,7 @@ import type {
   DashboardStats,
   Purchase
 } from '../../types';
-import { getColombiaTimestamp, bogotaDateKey } from '../../utils/dateUtils';
+import { getColombiaTimestamp, startOfDayBogota, endOfDayBogota, bogotaDateKey } from '../../utils/dateUtils';
 import { agruparPedidos, faltantesDeStock, StockInsuficienteError, type Pedido } from '../../utils/stock';
 
 // Espera confirmación del servidor con timeout de 15 segundos
@@ -527,54 +527,82 @@ async function reservarExistencias(
 }
 
 /**
- * Registra un pago sobre un plan separe o un servicio tecnico, junto con sus
- * registros en ventas, en una sola transaccion.
+ * Lee un plan separe o un servicio tecnico dentro de una transaccion, deja que
+ * `construir` calcule los cambios sobre ese dato fresco y escribe todo en un
+ * solo commit: el documento, las ventas contables que se crean o se borran y
+ * los movimientos de stock.
  *
- * Antes el componente tomaba el documento que tenia en memoria, le agregaba
- * el pago y reescribia el arreglo `payments` completo. Esas pantallas no
- * escuchan cambios en vivo, asi que un segundo equipo con la pantalla abierta
- * desde antes reescribia el arreglo sin el pago que acababa de registrar el
- * primero: el pago desaparecia del plan aunque su venta quedara. Ademas la
- * venta se guardaba aparte y, si fallaba, el error se tragaba y la caja no
- * cuadraba con el plan.
+ * Las pantallas de Plan Separe y Servicio Tecnico no escuchan cambios en vivo.
+ * Antes cada accion tomaba el documento que tenia en memoria, le hacia el
+ * cambio y reescribia arreglos completos (`payments`, `items`): un segundo
+ * equipo con la pantalla abierta desde antes borraba lo que el primero acababa
+ * de guardar. Y lo que acompanaba al cambio (la venta del abono, la entrega,
+ * el stock) se guardaba aparte, a veces tragandose el error.
  *
- * `construir` recibe el documento leido dentro de la transaccion y devuelve
- * los cambios, las ventas a crear y lo que se le entrega al componente.
- * Firestore puede reintentar la transaccion, asi que `construir` no debe
- * tener efectos por fuera de lo que devuelve.
+ * `construir` puede ejecutarse mas de una vez si Firestore reintenta la
+ * transaccion, asi que no debe tener efectos por fuera de lo que devuelve.
  *
- * Las ventas que se crean aqui son registros contables (abonos y entregas):
- * no descuentan stock, igual que en salesService.add.
+ * Las ventas que se crean o borran aqui son registros contables (abonos,
+ * entregas, devoluciones): no mueven stock, igual que en salesService.add.
+ * Un movimiento de stock sobre un producto que ya no existe se omite.
  */
-export async function registrarPago<T, R>(
+export interface CambiosEnTransaccion<R> {
+  cambios: Record<string, unknown>;
+  ventas?: Record<string, unknown>[];
+  ventasABorrar?: string[];
+  stock?: { productId: string; cambio: number }[];
+  resultado: R;
+}
+
+export async function actualizarEnTransaccion<T, R>(
   coleccion: typeof COLLECTIONS.LAYAWAYS | typeof COLLECTIONS.TECHNICAL_SERVICES,
   id: string,
-  construir: (actual: T) => {
-    cambios: Record<string, unknown>;
-    ventas: Record<string, unknown>[];
-    resultado: R;
-  }
+  construir: (actual: T) => CambiosEnTransaccion<R>
 ): Promise<R> {
   const ref = doc(db, coleccion, id);
 
   const resultado = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) {
-      throw new Error('No se encontró el documento al que se le registra el pago');
+      throw new Error(
+        coleccion === COLLECTIONS.LAYAWAYS
+          ? 'No se encontró el plan separe. Puede que lo hayan eliminado desde otro equipo.'
+          : 'No se encontró el servicio técnico. Puede que lo hayan eliminado desde otro equipo.'
+      );
     }
 
     const actual = { id: snap.id, ...cleanTimestamps(snap.data()) } as T;
-    const { cambios, ventas, resultado } = construir(actual);
+    const { cambios, ventas = [], ventasABorrar = [], stock = [], resultado } = construir(actual);
+
+    // Firestore exige que todas las lecturas ocurran antes de cualquier escritura.
+    const productosExistentes = new Set<string>();
+    for (const { productId } of stock) {
+      if (!productId || productosExistentes.has(productId)) continue;
+      const productoSnap = await tx.get(doc(db, COLLECTIONS.PRODUCTS, productId));
+      if (productoSnap.exists()) productosExistentes.add(productId);
+    }
 
     for (const venta of ventas) {
       const tipo = venta.type;
       if (!tipo || tipo === 'regular') {
-        throw new Error('registrarPago solo crea registros contables, no ventas que descuenten stock');
+        throw new Error('actualizarEnTransaccion solo crea registros contables, no ventas que descuenten stock');
       }
       tx.set(doc(collection(db, COLLECTIONS.SALES)), removeUndefined({
         ...venta,
         createdAt: getColombiaTimestamp()
       }));
+    }
+
+    for (const ventaId of ventasABorrar) {
+      tx.delete(doc(db, COLLECTIONS.SALES, ventaId));
+    }
+
+    for (const { productId, cambio } of stock) {
+      if (!productosExistentes.has(productId) || !cambio) continue;
+      tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+        stock: increment(cambio),
+        updatedAt: getColombiaTimestamp()
+      });
     }
 
     tx.update(ref, removeUndefined({
@@ -587,6 +615,113 @@ export async function registrarPago<T, R>(
 
   await waitForServerConfirmation();
   return resultado;
+}
+
+/**
+ * Registra un pago sobre un plan separe o un servicio tecnico junto con sus
+ * registros en ventas (ver actualizarEnTransaccion).
+ */
+export async function registrarPago<T, R>(
+  coleccion: typeof COLLECTIONS.LAYAWAYS | typeof COLLECTIONS.TECHNICAL_SERVICES,
+  id: string,
+  construir: (actual: T) => {
+    cambios: Record<string, unknown>;
+    ventas: Record<string, unknown>[];
+    resultado: R;
+  }
+): Promise<R> {
+  return actualizarEnTransaccion(coleccion, id, construir);
+}
+
+/**
+ * Busca la venta contable que corresponde a un pago de plan separe o de
+ * servicio tecnico. La venta no guarda el id del pago, asi que se busca por
+ * documento de origen, tipo y monto; si hay varias con el mismo monto se
+ * toma la registrada mas cerca de la fecha del pago.
+ *
+ * Antes se descargaba la coleccion completa de ventas para buscarla.
+ */
+export async function buscarVentaDePago(
+  origen: { layawayId: string } | { technicalServiceId: string },
+  pago: { amount: number; paymentDate?: string }
+): Promise<string | null> {
+  const [campo, valor, tipo] = 'layawayId' in origen
+    ? ['layawayId', origen.layawayId, 'layaway_payment']
+    : ['technicalServiceId', origen.technicalServiceId, 'technical_service_payment'];
+
+  const snap = await getDocs(query(collection(db, COLLECTIONS.SALES), where(campo, '==', valor)));
+  const candidatas = snap.docs
+    .map(d => ({ id: d.id, ...(cleanTimestamps(d.data()) as { type?: string; total?: number; createdAt?: string; isLayaway?: boolean }) }))
+    .filter(v =>
+      v.total === pago.amount &&
+      (v.type === tipo || (tipo === 'layaway_payment' && !v.type && v.isLayaway))
+    );
+
+  if (candidatas.length === 0) return null;
+  if (candidatas.length === 1 || !pago.paymentDate) return candidatas[0].id;
+
+  const fechaPago = new Date(pago.paymentDate).getTime();
+  const distancia = (v: { createdAt?: string }) =>
+    Math.abs((v.createdAt ? new Date(v.createdAt).getTime() : 0) - fechaPago);
+  return candidatas.sort((a, b) => distancia(a) - distancia(b))[0].id;
+}
+
+/**
+ * Busca los registros de entrega (ventas 'layaway_delivery') que corresponden
+ * a recogidas de un plan separe.
+ *
+ * Al revertir una recogida, o al cancelar el pago que habia completado el
+ * plan, la recogida desaparece pero su registro de entrega quedaba: al volver
+ * a recoger se creaba otro y la ganancia se contaba dos veces.
+ *
+ * Las entregas nuevas guardan `pickupId`. Las anteriores se reconocen por
+ * producto, cantidad y una fecha a menos de 5 minutos de la recogida; si hay
+ * mas de una posible, no se toma ninguna.
+ */
+export async function buscarVentasDeEntrega(
+  layawayId: string,
+  recogidas: { pickupId: string; productId: string; quantity: number; date: string }[]
+): Promise<{ ventaPorRecogida: Record<string, string>; sinIdentificar: number }> {
+  if (recogidas.length === 0) return { ventaPorRecogida: {}, sinIdentificar: 0 };
+
+  const snap = await getDocs(query(collection(db, COLLECTIONS.SALES), where('layawayId', '==', layawayId)));
+  const entregas = snap.docs
+    .map(d => ({ id: d.id, ...(cleanTimestamps(d.data()) as {
+      type?: string;
+      pickupId?: string;
+      createdAt?: string;
+      items?: { productId?: string; quantity?: number }[];
+    }) }))
+    .filter(v => v.type === 'layaway_delivery');
+
+  const usadas = new Set<string>();
+  const ventaPorRecogida: Record<string, string> = {};
+  let sinIdentificar = 0;
+
+  for (const recogida of recogidas) {
+    let venta = entregas.find(v => v.pickupId === recogida.pickupId && !usadas.has(v.id));
+    if (!venta) {
+      const fecha = new Date(recogida.date).getTime();
+      const posibles = entregas.filter(v =>
+        !v.pickupId &&
+        !usadas.has(v.id) &&
+        v.items?.[0]?.productId === recogida.productId &&
+        v.items?.[0]?.quantity === recogida.quantity &&
+        v.createdAt !== undefined &&
+        Math.abs(new Date(v.createdAt).getTime() - fecha) < 5 * 60 * 1000
+      );
+      venta = posibles.length === 1 ? posibles[0] : undefined;
+    }
+
+    if (venta) {
+      usadas.add(venta.id);
+      ventaPorRecogida[recogida.pickupId] = venta.id;
+    } else {
+      sinIdentificar++;
+    }
+  }
+
+  return { ventaPorRecogida, sinIdentificar };
 }
 
 export const salesService = {
@@ -657,74 +792,73 @@ export const salesService = {
     });
   },
 
+  /**
+   * Elimina una venta y, si descontó stock, lo devuelve. Todo en una
+   * transaccion.
+   *
+   * Antes se leia la venta y se armaba un batch aparte: si dos personas
+   * borraban la misma venta al tiempo, las dos alcanzaban a leerla y las dos
+   * devolvian el stock. Dentro de la transaccion la segunda ve que la venta ya
+   * no existe y no hace nada.
+   */
   async delete(id: string): Promise<void> {
     const saleRef = doc(db, COLLECTIONS.SALES, id);
 
-    // Get sale data to restore product stock
-    const saleDoc = await getDoc(saleRef);
-    if (!saleDoc.exists()) {
-      throw new Error('Venta no encontrada');
-    }
-
-    const saleData = saleDoc.data() as Sale;
-    const batch = writeBatch(db);
-
-    // Delete sale
-    batch.delete(saleRef);
-
-    // Solo restaurar stock si esta venta lo descontó al crearse — debe ser
-    // simétrico a salesService.add. Las ventas tipo layaway_*/technical_service_*
-    // son sólo registros contables y nunca tocaron stock.
-    const affectedStock = !saleData.type || saleData.type === 'regular';
-
-    if (affectedStock) {
-      // Restore product stocks (only for products that still exist)
-      for (const item of saleData.items) {
-        if (!item.productId) continue;
-        const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-        const productDoc = await getDoc(productRef);
-
-        // Only update stock if product still exists
-        if (productDoc.exists()) {
-          batch.update(productRef, {
-            stock: increment(item.quantity), // Add back the sold quantity
-            updatedAt: getColombiaTimestamp()
-          });
-        }
-        // If product doesn't exist anymore, we skip the stock restoration
-        // This can happen if the product was deleted after the sale was made
-      }
-
-      // Restaurar también stock de cortesías que se descontaron al vender
-      if (saleData.courtesyItems && Array.isArray(saleData.courtesyItems)) {
-        for (const courtesyItem of saleData.courtesyItems) {
-          if (!courtesyItem.productId) continue;
-          const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
-          const productDoc = await getDoc(productRef);
-          if (productDoc.exists()) {
-            batch.update(productRef, {
-              stock: increment(courtesyItem.quantity),
-              updatedAt: getColombiaTimestamp()
-            });
-          }
-        }
-      }
-    }
-
-    // Eliminar también los registros en /courtesies asociados a esta venta
-    // para no dejar histórico huérfano. Tolerante a fallo de permisos.
+    // Las cortesias asociadas se buscan antes (una consulta no puede ir dentro
+    // de la transaccion) y se borran en el mismo commit. Tolerante a fallo de
+    // permisos.
+    let cortesiaIds: string[] = [];
     try {
-      const courtesyQuery = query(
+      const courtesyDocs = await getDocs(query(
         collection(db, COLLECTIONS.COURTESIES),
         where('saleId', '==', id)
-      );
-      const courtesyDocs = await getDocs(courtesyQuery);
-      courtesyDocs.forEach(d => batch.delete(d.ref));
+      ));
+      cortesiaIds = courtesyDocs.docs.map(d => d.id);
     } catch (err) {
-      console.warn('No se pudieron limpiar cortesías asociadas a la venta:', err);
+      console.warn('No se pudieron buscar cortesías asociadas a la venta:', err);
     }
 
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      const saleDoc = await tx.get(saleRef);
+      if (!saleDoc.exists()) {
+        throw new Error('Venta no encontrada. Puede que ya la hayan eliminado desde otro equipo.');
+      }
+
+      const saleData = saleDoc.data() as Sale;
+
+      // Solo restaurar stock si esta venta lo descontó al crearse — debe ser
+      // simétrico a salesService.add. Las ventas tipo layaway_*/technical_service_*
+      // son sólo registros contables y nunca tocaron stock.
+      const affectedStock = !saleData.type || saleData.type === 'regular';
+      const porProducto = new Map<string, number>();
+      if (affectedStock) {
+        const lineas = [...(saleData.items || []), ...(saleData.courtesyItems || [])];
+        for (const linea of lineas) {
+          if (!linea.productId || !linea.quantity) continue;
+          porProducto.set(linea.productId, (porProducto.get(linea.productId) || 0) + linea.quantity);
+        }
+      }
+
+      // Todas las lecturas antes de escribir. Si el producto ya no existe se
+      // omite la devolución de su stock.
+      const existentes: string[] = [];
+      for (const productId of porProducto.keys()) {
+        const productDoc = await tx.get(doc(db, COLLECTIONS.PRODUCTS, productId));
+        if (productDoc.exists()) existentes.push(productId);
+      }
+
+      tx.delete(saleRef);
+      for (const productId of existentes) {
+        tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+          stock: increment(porProducto.get(productId) || 0),
+          updatedAt: getColombiaTimestamp()
+        });
+      }
+      for (const cortesiaId of cortesiaIds) {
+        tx.delete(doc(db, COLLECTIONS.COURTESIES, cortesiaId));
+      }
+    });
+
     await waitForServerConfirmation();
   },
 
@@ -749,82 +883,54 @@ export const salesService = {
     );
   },
 
-  // Suscripción optimizada para ventas del día de un vendedor específico
-  subscribeTodaySalesBySalesperson(salesPersonId: string, callback: (sales: Sale[]) => void) {
-    console.log('🔥 Suscripción optimizada: Solo ventas del día para vendedor', salesPersonId);
+  /**
+   * Ventas del día de un vendedor, en vivo.
+   *
+   * Se consulta solo por fecha (un rango sobre un único campo no necesita
+   * índice compuesto) y el vendedor se filtra en el cliente, cubriendo las
+   * ventas con salesPersonId y las antiguas que solo guardan el email en
+   * salesPersonName. Antes la consulta de esta sede exigía un índice
+   * salesPersonId + createdAt que no está en firestore.indexes.json: si
+   * faltaba, el error se convertía en una lista vacía y el vendedor veía
+   * "0 ventas" sin ningún aviso. Ahora el error llega a `onError`.
+   */
+  subscribeTodaySalesBySalesperson(
+    salesPersonId: string,
+    salesPersonEmail: string,
+    callback: (sales: Sale[]) => void,
+    onError?: (error: Error) => void
+  ) {
+    // Rango del día calendario Colombia (independiente de la TZ del navegador).
+    const todayStartISO = startOfDayBogota();
+    const todayEndISO = endOfDayBogota();
 
-    // Suscribirse a todas las ventas del vendedor y filtrar en el cliente
-    // Esto evita problemas de zona horaria y es más confiable
-    // No usamos orderBy para evitar requerir índice compuesto en Firestore
     const q = query(
       collection(db, COLLECTIONS.SALES),
-      where('salesPersonId', '==', salesPersonId)
+      where('createdAt', '>=', todayStartISO),
+      where('createdAt', '<=', todayEndISO),
+      orderBy('createdAt', 'desc')
     );
 
-    return onSnapshot(q, (snapshot) => {
-      // Día calendario Colombia, independiente de la TZ del navegador.
-      const hoyBogota = bogotaDateKey();
+    return onSnapshot(q,
+      (snapshot) => {
+        const allTodaySales = snapshot.docs.map(doc => {
+          const data = doc.data();
+          const cleanedData = cleanTimestamps(data);
+          return { id: doc.id, ...cleanedData };
+        }) as Sale[];
 
-      const allSales = snapshot.docs.map(doc => {
-        const data = doc.data();
-        const cleanedData = cleanTimestamps(data);
-        return {
-          id: doc.id,
-          ...cleanedData
-        };
-      }) as Sale[];
+        const todaySales = allTodaySales.filter(sale =>
+          (salesPersonId && sale.salesPersonId === salesPersonId) ||
+          (salesPersonEmail && sale.salesPersonName === salesPersonEmail)
+        );
 
-      // Filtrar solo las ventas de hoy
-      const todaySales = allSales.filter(sale => {
-        if (!sale.createdAt) return false;
-
-        // createdAt llega en varias formas segun como se escribio la venta
-        // (texto ISO, Timestamp de Firestore, o {seconds}); el tipo solo
-        // declara la primera, asi que se maneja sin estrechar.
-        const createdAt = sale.createdAt as any;
-
-        // Ignorar ventas con timestamps corruptos
-        if (createdAt._methodName === 'serverTimestamp') {
-          console.warn('⚠️ Venta con timestamp corrupto en MyDailySales, ignorando:', sale.id);
-          return false;
-        }
-
-        // Convertir a Date, soportando diferentes formatos
-        let saleDate: Date;
-        if (typeof createdAt === 'string') {
-          saleDate = new Date(createdAt);
-        } else if (createdAt.toDate && typeof createdAt.toDate === 'function') {
-          saleDate = createdAt.toDate();
-        } else if (createdAt.seconds) {
-          saleDate = new Date(createdAt.seconds * 1000);
-        } else {
-          saleDate = new Date(createdAt);
-        }
-
-        return bogotaDateKey(saleDate) === hoyBogota;
-      });
-
-      console.log(`🔥 Ventas totales del vendedor: ${allSales.length}`);
-      console.log(`🔥 Ventas del día (filtradas): ${todaySales.length}`);
-      console.log(`🔥 Día Colombia: ${hoyBogota}`);
-
-      // Ordenar las ventas por fecha de creación (más reciente primero) en el cliente
-      const sortedSales = todaySales.sort((a, b) => {
-        const getTime = (date: any) => {
-          if (!date) return 0;
-          if (typeof date === 'string') return new Date(date).getTime();
-          if (date.toDate && typeof date.toDate === 'function') return date.toDate().getTime();
-          if (date.seconds) return date.seconds * 1000;
-          return 0;
-        };
-        return getTime(b.createdAt) - getTime(a.createdAt); // Descendente
-      });
-
-      callback(sortedSales);
-    }, (error) => {
-      // Sin este callback un fallo de lectura se veria como lista vacia.
-      console.error('Error escuchando ventas del día del vendedor:', error);
-    });
+        callback(todaySales);
+      },
+      (error) => {
+        console.error('❌ Error en suscripción de ventas del día:', error);
+        onError?.(error);
+      }
+    );
   }
 };
 
@@ -1070,12 +1176,21 @@ export const layawaysService = {
         : null;
       const customerSnap = saldoAcreditado > 0 && customerRef ? await tx.get(customerRef) : null;
 
+      // Un producto que se elimino despues de separarlo no tiene a donde
+      // volver. Antes el update sobre ese documento hacia fallar toda la
+      // transaccion y el plan no se podia cancelar.
+      const devolubles: typeof porDevolver = [];
+      for (const linea of porDevolver) {
+        const productoSnap = await tx.get(doc(db, COLLECTIONS.PRODUCTS, linea.productId));
+        if (productoSnap.exists()) devolubles.push(linea);
+      }
+
       tx.update(layawayRef, {
         status: 'cancelled',
         updatedAt: getColombiaTimestamp()
       });
 
-      for (const { productId, cantidad } of porDevolver) {
+      for (const { productId, cantidad } of devolubles) {
         tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
           stock: increment(cantidad),
           updatedAt: getColombiaTimestamp()
@@ -1091,7 +1206,7 @@ export const layawaysService = {
 
       return {
         yaCancelado: false,
-        unidadesDevueltas: porDevolver.reduce((sum, x) => sum + x.cantidad, 0),
+        unidadesDevueltas: devolubles.reduce((sum, x) => sum + x.cantidad, 0),
         saldoAcreditado: customerSnap?.exists() ? saldoAcreditado : 0
       };
     });
@@ -1468,8 +1583,10 @@ export const technicalServicesService = {
    * ya no tenia. El registro de venta no guarda el id del pago, asi que se
    * busca por monto; si hay varios iguales no se puede saber cual es y se
    * prefiere no tocar nada (igual que con los abonos de plan separe).
+   *
+   * La venta se borra en la misma transaccion.
    */
-  async quitarPagoDeVenta(serviceId: string, monto: number): Promise<void> {
+  async quitarPagoDeVenta(serviceId: string, monto: number, saleId: string): Promise<void> {
     const serviceRef = doc(db, COLLECTIONS.TECHNICAL_SERVICES, serviceId);
 
     await runTransaction(db, async (tx) => {
@@ -1514,6 +1631,7 @@ export const technicalServicesService = {
       }
 
       tx.update(serviceRef, removeUndefined(cambios));
+      tx.delete(doc(db, COLLECTIONS.SALES, saleId));
     });
 
     await waitForServerConfirmation();

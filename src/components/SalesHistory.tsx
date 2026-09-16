@@ -14,9 +14,12 @@ import { useAppSelector } from '../hooks/useAppSelector';
 import { processProductReturn, deleteSale } from '../store/thunks/salesThunks';
 import { fetchCustomers } from '../store/thunks/customersThunks';
 import { useFirebase } from '../contexts/FirebaseContext';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { actualizarEnTransaccion, buscarVentasDeEntrega, technicalServicesService } from '../services/firebase/firestore';
+import { COLLECTIONS } from '../services/firebase/collections';
+import { deleteSale as quitarVentaDelEstado } from '../store/slices/firebaseSlice';
 import { db } from '../config/firebase';
-import { AppUser } from '../types';
+import { AppUser, LayawayPlan } from '../types';
 import { bogotaDateKey, BOGOTA_TIME_ZONE } from '../utils/dateUtils';
 import {
   History,
@@ -331,90 +334,119 @@ export function SalesHistory() {
 
     setIsProcessing(true);
     try {
+      const venta = deleteModal.saleData as Sale & { technicalServiceId?: string };
+      // Cuando la venta se borra dentro de la transaccion del plan o del
+      // servicio, solo queda quitarla de la pantalla.
+      let borradaEnTransaccion = false;
+
+      if (venta?.type === 'layaway_delivery') {
+        // Un registro de entrega va ligado a una recogida del plan: borrarlo
+        // solo quitaria la ganancia y dejaria el producto como entregado.
+        // Antes se buscaba un pago de $0 y fallaba con un mensaje confuso.
+        showNotification(
+          'error',
+          'No se eliminó el registro',
+          'Los registros de entrega se eliminan revirtiendo la recogida desde el plan separe; el registro se borra junto con ella.'
+        );
+        setIsProcessing(false);
+        return;
+      }
+
       // Si es abono a plan separe, eliminar también el pago en el plan separe
-      if (deleteModal?.saleData?.isLayaway && deleteModal?.saleData?.layawayId) {
+      if (venta?.isLayaway && venta?.layawayId) {
         try {
-          // Buscar el plan separe y el pago correspondiente
-          const { layawaysService } = await import('../services/firebase/firestore');
-          const allLayaways = await layawaysService.getAll();
-          const layaway = allLayaways.find(l => l.id === deleteModal.saleData.layawayId);
-          if (!layaway) {
+          const RECOGIDA_AUTOMATICA = 'Marcado automáticamente como recogido al completar el pago';
+          const layawayId = venta.layawayId;
+
+          // Las consultas no pueden ir dentro de la transaccion: se buscan
+          // antes las entregas de las recogidas automaticas, que se revierten
+          // si el plan vuelve a quedar activo.
+          const planSnap = await getDoc(doc(db, 'layaways', layawayId));
+          if (!planSnap.exists()) {
             throw new Error('No se encontró el plan separe de este abono. No se eliminó nada para no descuadrar el plan.');
           }
-          {
+          const planGuardado = planSnap.data() as LayawayPlan;
+          const { ventaPorRecogida } = await buscarVentasDeEntrega(
+            layawayId,
+            (planGuardado.items || []).flatMap(item =>
+              (item.pickedUpHistory || [])
+                .filter(pickup => pickup.notes === RECOGIDA_AUTOMATICA)
+                .map(pickup => ({ pickupId: pickup.id, productId: item.productId, quantity: pickup.quantity, date: pickup.date }))
+            )
+          );
+
+          // Pago, venta y entregas revertidas en una sola transaccion sobre el
+          // plan guardado. Antes se descargaban todos los planes, se
+          // reescribia `payments` y la venta se borraba en otro paso.
+          await actualizarEnTransaccion<LayawayPlan, null>(COLLECTIONS.LAYAWAYS, layawayId, (layaway) => {
             // El abono no guarda el id del pago, asi que se busca por monto.
             // Si hay varios pagos iguales no se puede saber cual es: se
             // prefiere no borrar antes que descontar el equivocado.
-            const candidatos = layaway.payments.filter(p => p.amount === deleteModal.saleData.total);
+            const candidatos = (layaway.payments || []).filter(p => p.amount === venta.total);
             if (candidatos.length === 0) {
               throw new Error('No se encontró el pago correspondiente dentro del plan separe. No se eliminó nada.');
             }
             if (candidatos.length > 1) {
               throw new Error(`El plan separe tiene ${candidatos.length} pagos por ese mismo monto y no se puede saber cuál corresponde. Elimínalo desde el plan separe.`);
             }
-            const abonoPayment = candidatos[0];
-            {
-              // Eliminar el pago usando la lógica del plan separe
-              // Si tienes una función pública para cancelar pago, úsala aquí
-              // Si no, elimina el pago y actualiza el plan separe
-              const updatedPayments = layaway.payments.filter(p => p.id !== abonoPayment.id);
-              const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-              const newRemainingBalance = layaway.totalAmount - totalPaid;
-              let newStatus = layaway.status;
-              let updatedItems = layaway.items;
-              if (layaway.status === 'completed' && newRemainingBalance > 0) {
-                newStatus = 'active';
-                updatedItems = layaway.items.map(item => {
-                  const manualPickupHistory = item.pickedUpHistory?.filter(
-                    pickup => pickup.notes !== 'Marcado automáticamente como recogido al completar el pago'
-                  ) || [];
-                  const manualPickedUpQuantity = manualPickupHistory.reduce(
-                    (sum, pickup) => sum + pickup.quantity, 0
-                  );
-                  return {
-                    ...item,
-                    pickedUpQuantity: manualPickedUpQuantity,
-                    pickedUpHistory: manualPickupHistory
-                  };
-                });
-              }
-              const updateData: any = {
-                payments: updatedPayments,
-                remainingBalance: newRemainingBalance,
-                status: newStatus
-              };
-              if (newStatus === 'active' && layaway.status === 'completed') {
-                updateData.items = updatedItems;
-              }
-              await layawaysService.update(layaway.id, updateData);
+
+            const updatedPayments = layaway.payments.filter(p => p.id !== candidatos[0].id);
+            const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newRemainingBalance = layaway.totalAmount - totalPaid;
+            let newStatus = layaway.status;
+            let updatedItems = layaway.items;
+            const ventasABorrar = [deleteModal.saleId];
+            if (layaway.status === 'completed' && newRemainingBalance > 0) {
+              newStatus = 'active';
+              updatedItems = layaway.items.map(item => {
+                const history = item.pickedUpHistory || [];
+                for (const pickup of history) {
+                  if (pickup.notes === RECOGIDA_AUTOMATICA && ventaPorRecogida[pickup.id]) {
+                    ventasABorrar.push(ventaPorRecogida[pickup.id]);
+                  }
+                }
+                const manualPickupHistory = history.filter(pickup => pickup.notes !== RECOGIDA_AUTOMATICA);
+                return {
+                  ...item,
+                  pickedUpQuantity: manualPickupHistory.reduce((sum, pickup) => sum + pickup.quantity, 0),
+                  pickedUpHistory: manualPickupHistory
+                };
+              });
             }
-          }
-        } catch (err: any) {
-          // Antes solo se registraba en consola y la venta se borraba igual:
-          // el plan separe quedaba con un pago cuya venta ya no existia, o al
-          // reves. Se detiene la eliminacion y se avisa.
+            const cambios: Record<string, unknown> = {
+              payments: updatedPayments,
+              remainingBalance: newRemainingBalance,
+              status: newStatus
+            };
+            if (newStatus === 'active' && layaway.status === 'completed') {
+              cambios.items = updatedItems;
+            }
+            return { cambios, ventasABorrar, resultado: null };
+          });
+          borradaEnTransaccion = true;
+        } catch (err) {
+          // Se detiene la eliminacion y se avisa, para no dejar el plan con un
+          // pago cuya venta ya no existe, o al reves.
           console.error('Error eliminando abono en plan separe:', err);
           showNotification(
             'error',
             'No se eliminó la venta',
-            err?.message || 'No se pudo actualizar el plan separe, así que la venta no se eliminó para no dejar los datos descuadrados.'
+            (err instanceof Error && err.message) || 'No se pudo actualizar el plan separe, así que la venta no se eliminó para no dejar los datos descuadrados.'
           );
           setIsProcessing(false);
           return;
         }
-      } else if (
-        deleteModal?.saleData?.type === 'technical_service_payment' &&
-        (deleteModal.saleData as Sale & { technicalServiceId?: string }).technicalServiceId
-      ) {
-        // Igual que con los abonos de plan separe: antes de borrar la venta se
-        // quita el pago del servicio tecnico. Antes solo se borraba la venta y
-        // el servicio seguia mostrando el pago y un saldo pendiente menor.
+      } else if (venta?.type === 'technical_service_payment' && venta.technicalServiceId) {
+        // Igual que con los abonos de plan separe: el pago sale del servicio
+        // y la venta se borra en la misma transaccion. Antes solo se borraba
+        // la venta y el servicio seguia mostrando el pago.
         try {
-          const { technicalServicesService } = await import('../services/firebase/firestore');
           await technicalServicesService.quitarPagoDeVenta(
-            (deleteModal.saleData as Sale & { technicalServiceId: string }).technicalServiceId,
-            deleteModal.saleData.total
+            venta.technicalServiceId,
+            venta.total,
+            deleteModal.saleId
           );
+          borradaEnTransaccion = true;
         } catch (err) {
           console.error('Error eliminando pago en servicio técnico:', err);
           showNotification(
@@ -426,7 +458,12 @@ export function SalesHistory() {
           return;
         }
       }
-      await dispatch(deleteSale(deleteModal.saleId)).unwrap();
+
+      if (borradaEnTransaccion) {
+        dispatch(quitarVentaDelEstado(deleteModal.saleId));
+      } else {
+        await dispatch(deleteSale(deleteModal.saleId)).unwrap();
+      }
       // Cerrar modal de detalles si está abierto
       if (selectedSale && selectedSale.id === deleteModal.saleId) {
         setSelectedSale(null);

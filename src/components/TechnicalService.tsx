@@ -3,7 +3,7 @@ import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Cl
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectTechnicalServices, selectCustomers } from '../store/selectors';
-import { technicalServicesService, courtesiesService, registrarPago } from '../services/firebase/firestore';
+import { technicalServicesService, courtesiesService, registrarPago, actualizarEnTransaccion, buscarVentaDePago } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, PaymentMethod, Technician } from '../types';
 import { formatCurrency, formatNumberInput, parseNumberInput } from '../utils/currency';
@@ -102,7 +102,7 @@ export function TechnicalService() {
 
   const allTechnicalServices = useAppSelector(selectTechnicalServices);
   const customers = useAppSelector(selectCustomers);
-  const { showSuccess, showError, showConfirm } = useNotification();
+  const { showSuccess, showError, showWarning, showConfirm } = useNotification();
   const { appUser } = useAuth();
 
   // Estados locales
@@ -434,18 +434,29 @@ export function TechnicalService() {
       
       // Special handling for overpayment adjustment
       if (partToDelete.id === 'adjustment') {
-        const { remainingBalance } = calculateRealTotals(selectedTechnicalService);
-        const overpayment = Math.abs(remainingBalance);
-        
-        if (overpaymentAction === 'credit') {
-          // Add to customer credit
-          const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
-          if (customer) {
-            // El sobrepago sale del servicio con un pago negativo, igual que un
-            // reembolso. Sin esto el servicio seguia sobrepagado, el boton
-            // "Reajustar" seguia disponible y cada clic volvia a sumar el mismo
-            // dinero al saldo del cliente. Primero se cierra el sobrepago y
-            // despues se acredita: si lo segundo falla, no queda duplicado.
+        const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
+        if (overpaymentAction === 'credit' && !customer) {
+          throw new Error('No se encontró el cliente del servicio para acreditarle el saldo.');
+        }
+
+        // El sobrepago se calcula sobre el servicio guardado, no sobre la copia
+        // de la pantalla, y el pago negativo (y su egreso en ventas, si es un
+        // reembolso) se guardan en una sola transaccion. Antes se reescribia
+        // el servicio completo desde la pantalla: un segundo equipo podia
+        // pisar pagos o repuestos.
+        const { updatedService, overpayment } = await actualizarEnTransaccion<TechnicalServicePlan, {
+          updatedService: TechnicalServicePlan;
+          overpayment: number;
+        }>(COLLECTIONS.TECHNICAL_SERVICES, selectedTechnicalService.id, (actual) => {
+          const { remainingBalance } = calculateRealTotals(actual);
+          if (remainingBalance >= -0.01) {
+            throw new Error('Este servicio ya no tiene sobrepago (puede que lo hayan reajustado desde otro equipo). Recarga el servicio.');
+          }
+          const overpayment = Math.abs(remainingBalance);
+
+          if (overpaymentAction === 'credit') {
+            // El sobrepago sale del servicio con un pago negativo, o quedaria
+            // disponible para acreditarse otra vez.
             const creditPayment = {
               id: crypto.randomUUID(),
               amount: -overpayment,
@@ -454,47 +465,44 @@ export function TechnicalService() {
               paymentMethods: [{ method: 'credit' as const, amount: -overpayment }],
               notes: `Sobrepago convertido en saldo a favor`
             };
-
-            const updatedService = {
-              ...selectedTechnicalService,
-              payments: [...selectedTechnicalService.payments, creditPayment],
-              updatedAt: getColombiaTimestamp()
+            const payments = [...(actual.payments || []), creditPayment];
+            return {
+              cambios: { payments },
+              resultado: { updatedService: { ...actual, payments, updatedAt: getColombiaTimestamp() }, overpayment }
             };
-
-            await technicalServicesService.update(selectedTechnicalService.id, updatedService);
-            updateTechnicalServiceInState(updatedService);
-            setSelectedTechnicalService(updatedService);
-
-            await customersService.addCredit(customer.id, overpayment);
-
-            showSuccess(
-              'Saldo agregado',
-              `Se agregó ${formatCurrency(overpayment)} al saldo a favor de ${customer.name}`
-            );
           }
-        } else if (overpaymentAction === 'refund') {
-          // Create a negative payment to represent the refund
-          const refundPayment = {
-            id: crypto.randomUUID(),
-            amount: -overpayment,
-            paymentDate: getColombiaTimestamp(),
-            paymentMethod: 'efectivo' as const,
-            notes: `Reembolso por sobrepago en servicio técnico`
-          };
-          
-          const updatedService = {
-            ...selectedTechnicalService,
-            payments: [...selectedTechnicalService.payments, refundPayment],
-            updatedAt: getColombiaTimestamp()
-          };
-          
-          // Update in Firebase
-          await technicalServicesService.update(selectedTechnicalService.id, updatedService);
-          
-          // Update local state
-          updateTechnicalServiceInState(updatedService);
-          setSelectedTechnicalService(updatedService);
-          
+
+          if (overpaymentAction === 'refund') {
+            // Create a negative payment to represent the refund
+            const refundPayment = {
+              id: crypto.randomUUID(),
+              amount: -overpayment,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              notes: `Reembolso por sobrepago en servicio técnico`
+            };
+            const payments = [...(actual.payments || []), refundPayment];
+            return {
+              cambios: { payments },
+              ventas: [ventaDeDevolucion(actual, overpayment, 'Reembolso por sobrepago')],
+              resultado: { updatedService: { ...actual, payments, updatedAt: getColombiaTimestamp() }, overpayment }
+            };
+          }
+
+          throw new Error('Elige si el sobrepago se devuelve o queda como saldo a favor.');
+        });
+
+        updateTechnicalServiceInState(updatedService);
+        setSelectedTechnicalService(updatedService);
+
+        if (overpaymentAction === 'credit' && customer) {
+          // Despues de cerrar el sobrepago: si esto falla, no queda duplicado.
+          await customersService.addCredit(customer.id, overpayment);
+          showSuccess(
+            'Saldo agregado',
+            `Se agregó ${formatCurrency(overpayment)} al saldo a favor de ${customer.name}`
+          );
+        } else {
           showSuccess(
             'Reembolso registrado',
             `Se registró un reembolso de ${formatCurrency(overpayment)} para el cliente`
@@ -510,80 +518,94 @@ export function TechnicalService() {
       }
       
       // Regular delete handling
-      // Calculate if there will be overpayment
-      const currentTotal = selectedTechnicalService.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (selectedTechnicalService.laborCost || 0);
-      const totalPaid = selectedTechnicalService.payments.reduce((sum: number, payment: any) => sum + payment.amount, 0);
-      const removedAmount = partToDelete.item.totalCost;
-      const newTotal = currentTotal - removedAmount;
-      const overpayment = totalPaid - newTotal;
-      
-      // Remove the item from the array
-      const updatedItems = selectedTechnicalService.items.filter(item => item.id !== partToDelete.id);
-      
-      let updatedService = {
-        ...selectedTechnicalService,
-        items: updatedItems,
-        totalAmount: selectedTechnicalService.totalAmount - removedAmount,
-        totalCost: selectedTechnicalService.totalCost - removedAmount,
-        remainingBalance: selectedTechnicalService.remainingBalance - removedAmount,
-        updatedAt: getColombiaTimestamp()
-      };
+      const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
+      const partId = partToDelete.id;
+      const partName = partToDelete.name;
 
-      // Handle overpayment if exists
-      let creditoPorAcreditar: { customerId: string; customerName: string; amount: number } | null = null;
-      if (overpayment > 0.01) {
-        if (overpaymentAction === 'credit') {
-          // Add to customer credit
-          const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
-          if (customer) {
-            // Igual que en el reajuste: el sobrepago sale del servicio con un
-            // pago negativo, o quedaria disponible para acreditarse otra vez.
-            // El saldo se suma despues de guardar el servicio.
-            const creditPayment = {
+      // Repuesto, totales y ajuste del sobrepago se calculan sobre el servicio
+      // guardado y se escriben en una sola transaccion (ver reajuste arriba).
+      const { updatedService, removedAmount, creditoPorAcreditar, reembolso } = await actualizarEnTransaccion<TechnicalServicePlan, {
+        updatedService: TechnicalServicePlan;
+        removedAmount: number;
+        creditoPorAcreditar: number;
+        reembolso: number;
+      }>(COLLECTIONS.TECHNICAL_SERVICES, selectedTechnicalService.id, (actual) => {
+        const part = actual.items.find(item => item.id === partId);
+        if (!part) {
+          throw new Error('Ese repuesto ya no está en el servicio (puede que lo hayan eliminado desde otro equipo). Recarga el servicio.');
+        }
+
+        // Calculate if there will be overpayment
+        const currentTotal = actual.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (actual.laborCost || 0);
+        const totalPaid = (actual.payments || []).reduce((sum: number, payment: any) => sum + payment.amount, 0);
+        const removedAmount = part.totalCost;
+        const newTotal = currentTotal - removedAmount;
+        const overpayment = totalPaid - newTotal;
+
+        // Remove the item from the array
+        const updatedItems = actual.items.filter(item => item.id !== partId);
+
+        const cambios: Record<string, unknown> = {
+          items: updatedItems,
+          totalAmount: actual.totalAmount - removedAmount,
+          totalCost: actual.totalCost - removedAmount,
+          remainingBalance: actual.remainingBalance - removedAmount
+        };
+        const ventas: Record<string, unknown>[] = [];
+        let creditoPorAcreditar = 0;
+        let reembolso = 0;
+
+        // Handle overpayment if exists
+        if (overpayment > 0.01) {
+          if (overpaymentAction === 'credit' && customer) {
+            // El sobrepago sale del servicio con un pago negativo, o quedaria
+            // disponible para acreditarse otra vez. El saldo se suma despues.
+            cambios.payments = [...(actual.payments || []), {
               id: crypto.randomUUID(),
               amount: -overpayment,
               paymentDate: getColombiaTimestamp(),
               paymentMethod: 'efectivo' as const,
               paymentMethods: [{ method: 'credit' as const, amount: -overpayment }],
-              notes: `Sobrepago por eliminación de repuesto convertido en saldo a favor: ${partToDelete.name}`
-            };
-
-            updatedService = {
-              ...updatedService,
-              payments: [...selectedTechnicalService.payments, creditPayment]
-            };
-            creditoPorAcreditar = { customerId: customer.id, customerName: customer.name, amount: overpayment };
+              notes: `Sobrepago por eliminación de repuesto convertido en saldo a favor: ${partName}`
+            }];
+            creditoPorAcreditar = overpayment;
+          } else if (overpaymentAction === 'refund') {
+            // Create a negative payment to represent the refund
+            cambios.payments = [...(actual.payments || []), {
+              id: crypto.randomUUID(),
+              amount: -overpayment,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              notes: `Reembolso por eliminación de repuesto: ${partName}`
+            }];
+            ventas.push(ventaDeDevolucion(actual, overpayment, `Reembolso por eliminación de repuesto: ${partName}`));
+            reembolso = overpayment;
           }
-        } else if (overpaymentAction === 'refund') {
-          // Create a negative payment to represent the refund
-          const refundPayment = {
-            id: crypto.randomUUID(),
-            amount: -overpayment,
-            paymentDate: getColombiaTimestamp(),
-            paymentMethod: 'efectivo' as const,
-            notes: `Reembolso por eliminación de repuesto: ${partToDelete.name}`
-          };
-          
-          updatedService = {
-            ...updatedService,
-            payments: [...selectedTechnicalService.payments, refundPayment]
-          };
-          
-          showSuccess(
-            'Reembolso registrado',
-            `Se registró un reembolso de ${formatCurrency(overpayment)} para el cliente`
-          );
         }
-      }
-      
-      // Update in Firebase
-      await technicalServicesService.update(selectedTechnicalService.id, updatedService);
 
-      if (creditoPorAcreditar) {
-        await customersService.addCredit(creditoPorAcreditar.customerId, creditoPorAcreditar.amount);
+        return {
+          cambios,
+          ventas,
+          resultado: {
+            updatedService: { ...actual, ...cambios, updatedAt: getColombiaTimestamp() } as TechnicalServicePlan,
+            removedAmount,
+            creditoPorAcreditar,
+            reembolso
+          }
+        };
+      });
+
+      if (creditoPorAcreditar > 0 && customer) {
+        await customersService.addCredit(customer.id, creditoPorAcreditar);
         showSuccess(
           'Saldo agregado',
-          `Se agregó ${formatCurrency(creditoPorAcreditar.amount)} al saldo a favor de ${creditoPorAcreditar.customerName}`
+          `Se agregó ${formatCurrency(creditoPorAcreditar)} al saldo a favor de ${customer.name}`
+        );
+      }
+      if (reembolso > 0) {
+        showSuccess(
+          'Reembolso registrado',
+          `Se registró un reembolso de ${formatCurrency(reembolso)} para el cliente`
         );
       }
       
@@ -593,7 +615,7 @@ export function TechnicalService() {
       
       showSuccess(
         'Repuesto eliminado',
-        `Se eliminó "${partToDelete.name}" por ${formatCurrency(removedAmount)}`
+        `Se eliminó "${partName}" por ${formatCurrency(removedAmount)}`
       );
       
       dispatch(fetchTechnicalServices());
@@ -604,7 +626,7 @@ export function TechnicalService() {
       setOverpaymentAction(null);
     } catch (error) {
       console.error('Error deleting part:', error);
-      showError('Error', 'No se pudo eliminar el repuesto. Inténtalo de nuevo.');
+      showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo eliminar el repuesto. Inténtalo de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -615,32 +637,39 @@ export function TechnicalService() {
     if (!selectedTechnicalService) return;
     
     try {
-      const updatedItems = selectedTechnicalService.items.map(item => {
-        if (item.id === itemId) {
-          const updatedItem: any = { ...item, status: newStatus };
-          // Add installedAt timestamp when status changes to 'instalado'
-          if (newStatus === 'instalado' && item.status !== 'instalado') {
-            updatedItem.installedAt = getColombiaTimestamp();
+      // Se aplica sobre los repuestos guardados, no sobre la copia de la
+      // pantalla: antes un segundo equipo podia borrar un repuesto recien
+      // agregado al reescribir `items`.
+      const updatedService = await actualizarEnTransaccion<TechnicalServicePlan, TechnicalServicePlan>(
+        COLLECTIONS.TECHNICAL_SERVICES,
+        selectedTechnicalService.id,
+        (actual) => {
+          if (!actual.items.some(item => item.id === itemId)) {
+            throw new Error('Ese repuesto ya no está en el servicio. Recarga el servicio.');
           }
-          // Auditoría de cambio de estado
-          updatedItem.statusChangedBy = appUser?.uid;
-          updatedItem.statusChangedByName = appUser?.displayName || appUser?.email;
-          updatedItem.statusChangedAt = getColombiaTimestamp();
-          return updatedItem;
+          const updatedItems = actual.items.map(item => {
+            if (item.id === itemId) {
+              const updatedItem: any = { ...item, status: newStatus };
+              // Add installedAt timestamp when status changes to 'instalado'
+              if (newStatus === 'instalado' && item.status !== 'instalado') {
+                updatedItem.installedAt = getColombiaTimestamp();
+              }
+              // Auditoría de cambio de estado
+              updatedItem.statusChangedBy = appUser?.uid;
+              updatedItem.statusChangedByName = appUser?.displayName || appUser?.email;
+              updatedItem.statusChangedAt = getColombiaTimestamp();
+              return updatedItem;
+            }
+            return item;
+          });
+          return {
+            cambios: { items: updatedItems },
+            resultado: { ...actual, items: updatedItems }
+          };
         }
-        return item;
-      });
-
-      await technicalServicesService.update(selectedTechnicalService.id, {
-        items: updatedItems,
-        updatedAt: getColombiaTimestamp()
-      });
+      );
 
       // Update local state
-      const updatedService = {
-        ...selectedTechnicalService,
-        items: updatedItems
-      };
       updateTechnicalServiceInState(updatedService);
       
       showSuccess('Estado actualizado', `El repuesto ahora está en estado: ${
@@ -650,7 +679,7 @@ export function TechnicalService() {
       }`);
     } catch (error) {
       console.error('Error updating item status:', error);
-      showError('Error', 'No se pudo actualizar el estado del repuesto');
+      showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo actualizar el estado del repuesto');
     }
   };
 
@@ -845,6 +874,48 @@ export function TechnicalService() {
 
   const getRemainingAmountCreate = () => {
     return Math.max(0, serviceCost - getTotalPaidAmountCreate());
+  };
+
+  /**
+   * Registro contable de dinero que se le devuelve al cliente de un servicio
+   * técnico: un registro negativo del mismo tipo que los pagos, así la caja
+   * del día y los reportes lo descuentan. Revierte la ganancia en la misma
+   * proporción con que processPayment la reconoce al cobrar (la parte del
+   * negocio en la mano de obra). La comisión del datáfono no se revierte:
+   * ya se pagó.
+   */
+  const ventaDeDevolucion = (servicio: TechnicalServicePlan, monto: number, motivo: string): Record<string, unknown> => {
+    const serviceTotalCost = servicio.items?.reduce((sum: number, item: any) => sum + (item.partCost * item.quantity), 0) || 0;
+    const serviceLaborCost = servicio.laborCost || 0;
+    const serviceTotal = servicio.total || (serviceTotalCost + serviceLaborCost);
+    const laborProportion = serviceTotal > 0 ? serviceLaborCost / serviceTotal : 0;
+    const gananciaRevertida = monto * laborProportion * 0.5;
+
+    return {
+      items: [],
+      subtotal: -monto,
+      discount: 0,
+      tax: 0,
+      total: -monto,
+      finalTotal: -monto,
+      totalCost: -(monto - gananciaRevertida),
+      totalRevenue: -monto,
+      totalProfit: -gananciaRevertida,
+      profitMargin: monto > 0 ? (gananciaRevertida / monto) * 100 : 0,
+      paymentMethod: 'efectivo',
+      paymentMethods: [{ method: 'efectivo', amount: -monto, commission: 0 }],
+      useMultiplePayments: false,
+      totalCommissions: 0,
+      customerName: servicio.customerName,
+      customerId: servicio.customerId,
+      salesPersonId: appUser?.uid,
+      salesPersonName: appUser?.displayName || appUser?.email,
+      technicalServiceId: servicio.id,
+      type: 'technical_service_payment',
+      isRefund: true,
+      notes: `↩️ Devolución servicio técnico: ${servicio.deviceBrandModel || 'Dispositivo'} - Cliente: ${servicio.customerName} - ${motivo}`,
+      updatedAt: getColombiaTimestamp()
+    };
   };
 
   // Función auxiliar unificada para procesar pagos de servicios técnicos
@@ -1434,73 +1505,88 @@ export function TechnicalService() {
       async () => {
         setIsLoading(true);
         try {
-          // Filtrar el pago cancelado
-          const updatedPayments = selectedTechnicalService.payments.filter(p => p.id !== paymentId);
-          // Recalcular saldo pendiente
-          const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-          const newRemainingBalance = selectedTechnicalService.totalAmount - totalPaid;
-          // Si el plan estaba completado y ahora tiene saldo pendiente, cambiar status a active y revertir productos marcados automáticamente como recogidos
-          let newStatus = selectedTechnicalService.status;
-          let updatedItems = selectedTechnicalService.items;
-          if (selectedTechnicalService.status === 'completed' && newRemainingBalance > 0) {
-            newStatus = 'active';
-            updatedItems = selectedTechnicalService.items.map(item => {
-              const manualPickupHistory = item.pickedUpHistory?.filter(
-                pickup => pickup.notes !== 'Marcado automáticamente como recogido al completar el pago'
-              ) || [];
-              const manualPickedUpQuantity = manualPickupHistory.reduce(
-                (sum, pickup) => sum + pickup.quantity, 0
-              );
-              return {
-                ...item,
-                pickedUpQuantity: manualPickedUpQuantity,
-                pickedUpHistory: manualPickupHistory
-              };
-            });
-          }
-          // Actualizar en Firebase el servicio técnico
-          const updateData: any = {
-            payments: updatedPayments,
-            remainingBalance: newRemainingBalance,
-            status: newStatus
-          };
-          if (newStatus === 'active' && selectedTechnicalService.status === 'completed') {
-            updateData.items = updatedItems;
-          }
-          await technicalServicesService.update(selectedTechnicalService.id, updateData);
-          // Eliminar el abono correspondiente en la colección de ventas
-          try {
-            const { salesService } = await import('../services/firebase/firestore');
-            // Buscar el registro de venta del abono por layawayId, monto y tipo
-            const allSales = await salesService.getAll();
-            const abonoSale = allSales.find(sale =>
-              sale.type === 'technical_service_payment' &&
-              (sale as any).technicalServiceId === selectedTechnicalService.id &&
-              sale.total === paymentToCancel.amount
-            );
-            if (abonoSale) {
-              await salesService.delete(abonoSale.id);
-              console.log('Venta de abono de servicio técnico eliminada:', abonoSale.id);
-            } else {
-              console.warn('No se encontró la venta correspondiente al abono cancelado');
+          // La consulta no puede ir dentro de la transaccion: se busca antes
+          // la venta del pago (antes se descargaban todas las ventas).
+          const abonoSaleId = await buscarVentaDePago({ technicalServiceId: selectedTechnicalService.id }, paymentToCancel);
+
+          // Pago y venta en una sola transaccion, calculada sobre el servicio
+          // guardado. Antes se reescribia `payments` desde la copia de la
+          // pantalla y la venta se borraba aparte, tragandose el error.
+          const { updatedService, newStatus, previousStatus, newRemainingBalance } = await actualizarEnTransaccion<TechnicalServicePlan, {
+            updatedService: TechnicalServicePlan;
+            newStatus: TechnicalServicePlan['status'];
+            previousStatus: TechnicalServicePlan['status'];
+            newRemainingBalance: number;
+          }>(COLLECTIONS.TECHNICAL_SERVICES, selectedTechnicalService.id, (actual) => {
+            if (!(actual.payments || []).some(p => p.id === paymentId)) {
+              throw new Error('Ese pago ya no está en el servicio (puede que lo hayan cancelado desde otro equipo). Recarga el servicio.');
             }
-          } catch (err) {
-            console.error('Error eliminando abono en ventas:', err);
+
+            // Filtrar el pago cancelado
+            const updatedPayments = actual.payments.filter(p => p.id !== paymentId);
+            // Recalcular saldo pendiente
+            const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newRemainingBalance = actual.totalAmount - totalPaid;
+            // Si estaba completado y ahora tiene saldo pendiente, volver a activo y revertir recogidas automáticas
+            let newStatus = actual.status;
+            let updatedItems = actual.items;
+            if (actual.status === 'completed' && newRemainingBalance > 0) {
+              newStatus = 'active';
+              updatedItems = actual.items.map(item => {
+                const manualPickupHistory = item.pickedUpHistory?.filter(
+                  pickup => pickup.notes !== 'Marcado automáticamente como recogido al completar el pago'
+                ) || [];
+                const manualPickedUpQuantity = manualPickupHistory.reduce(
+                  (sum, pickup) => sum + pickup.quantity, 0
+                );
+                return {
+                  ...item,
+                  pickedUpQuantity: manualPickedUpQuantity,
+                  pickedUpHistory: manualPickupHistory
+                };
+              });
+            }
+
+            const cambios: Record<string, unknown> = {
+              payments: updatedPayments,
+              remainingBalance: newRemainingBalance,
+              status: newStatus
+            };
+            if (newStatus === 'active' && actual.status === 'completed') {
+              cambios.items = updatedItems;
+            }
+
+            return {
+              cambios,
+              ventasABorrar: abonoSaleId ? [abonoSaleId] : [],
+              resultado: {
+                updatedService: {
+                  ...actual,
+                  payments: updatedPayments,
+                  remainingBalance: newRemainingBalance,
+                  status: newStatus,
+                  items: updatedItems,
+                  updatedAt: getColombiaTimestamp()
+                },
+                newStatus,
+                previousStatus: actual.status,
+                newRemainingBalance
+              }
+            };
+          });
+
+          if (!abonoSaleId) {
+            showWarning(
+              'Pago no encontrado en ventas',
+              'El pago se canceló en el servicio, pero no se encontró su registro en Gestión de Ventas. Revísalo allí.'
+            );
           }
           // Actualizar estado local inmediatamente
-          const updatedLayaway = {
-            ...selectedTechnicalService,
-            payments: updatedPayments,
-            remainingBalance: newRemainingBalance,
-            status: newStatus,
-            items: updatedItems,
-            updatedAt: getColombiaTimestamp()
-          };
-          updateTechnicalServiceInState(updatedLayaway);
+          updateTechnicalServiceInState(updatedService);
           showSuccess(
             'Pago cancelado',
             `El pago de ${formatCurrency(paymentToCancel.amount)} ha sido cancelado y el abono eliminado del historial de ventas. ${
-              newStatus === 'active' && selectedTechnicalService.status === 'completed'
+              newStatus === 'active' && previousStatus === 'completed'
                 ? 'El servicio técnico ha vuelto a estado activo y se han revertido las recogidas automáticas.'
                 : `Nuevo saldo pendiente: ${formatCurrency(newRemainingBalance)}`
             }`
@@ -1510,7 +1596,7 @@ export function TechnicalService() {
           dispatch(fetchTechnicalServices());
         } catch (error) {
           console.error('Error cancelling payment:', error);
-          showError('Error al cancelar pago', 'No se pudo cancelar el pago. Inténtalo de nuevo.');
+          showError('Error al cancelar pago', error instanceof Error && error.message ? error.message : 'No se pudo cancelar el pago. Inténtalo de nuevo.');
         } finally {
           setIsLoading(false);
         }
@@ -1539,29 +1625,59 @@ export function TechnicalService() {
   const processCancellation = async (service: TechnicalServicePlan, refundAmount: number, penaltyAmount: number) => {
     setIsLoading(true);
     try {
-      // Actualizar el estado del servicio técnico
-      await technicalServicesService.update(service.id, { 
-        status: 'cancelled',
-        updatedAt: getColombiaTimestamp(),
-        // Auditoría de cancelación
-        cancelledBy: appUser?.uid,
-        cancelledByName: appUser?.displayName || appUser?.email,
-        statusChangedBy: appUser?.uid,
-        statusChangedByName: appUser?.displayName || appUser?.email,
-        statusChangedAt: getColombiaTimestamp()
-      });
+      // Estado, devolucion y su egreso en ventas en una sola transaccion,
+      // calculada sobre el servicio guardado.
+      //
+      // Antes solo se cambiaba el estado: la devolucion quedaba en un
+      // console.log y los reportes seguian contando como ingreso todo lo
+      // pagado. Ahora la devolucion se registra como un pago negativo en el
+      // servicio y un registro negativo en ventas con la fecha de hoy, asi que
+      // la caja del dia la descuenta. La penalizacion es lo que no se devuelve
+      // y sigue contando como ingreso.
+      await actualizarEnTransaccion<TechnicalServicePlan, null>(
+        COLLECTIONS.TECHNICAL_SERVICES,
+        service.id,
+        (actual) => {
+          if (actual.status === 'cancelled') {
+            throw new Error('Este servicio ya estaba cancelado. No se hizo ningún cambio.');
+          }
 
-      // Si hay devolución, registrar como egreso (nota: aquí deberías integrar con tu sistema de caja)
-      if (refundAmount > 0) {
-        console.log(`💸 Egreso por devolución de cancelación: ${formatCurrency(refundAmount)}`);
-        // TODO: Registrar en sistema de caja como egreso
-      }
+          const totalPagado = (actual.payments || []).reduce((sum, payment) => sum + payment.amount, 0);
+          if (refundAmount < 0 || refundAmount > totalPagado + 0.01 || (totalPagado > 0.01 && Math.abs(refundAmount + penaltyAmount - totalPagado) > 0.01)) {
+            throw new Error(
+              `Los pagos del servicio cambiaron (ahora suman ${formatCurrency(totalPagado)}), ` +
+              'probablemente desde otro equipo. Recarga el servicio y vuelve a definir la devolución.'
+            );
+          }
 
-      // La penalización NO se registra como ingreso porque es dinero que ya estaba en caja
-      // Solo es el monto que decides no devolver del pago original
-      if (penaltyAmount > 0) {
-        console.log(`📝 Penalización aplicada: ${formatCurrency(penaltyAmount)} (dinero retenido del pago original)`);
-      }
+          const cambios: Record<string, unknown> = {
+            status: 'cancelled',
+            // Auditoría de cancelación
+            cancelledBy: appUser?.uid,
+            cancelledByName: appUser?.displayName || appUser?.email,
+            statusChangedBy: appUser?.uid,
+            statusChangedByName: appUser?.displayName || appUser?.email,
+            statusChangedAt: getColombiaTimestamp()
+          };
+          const ventas: Record<string, unknown>[] = [];
+
+          if (refundAmount > 0) {
+            cambios.payments = [...(actual.payments || []), {
+              id: crypto.randomUUID(),
+              amount: -refundAmount,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              notes: `Devolución por cancelación del servicio${penaltyAmount > 0 ? ` (penalización retenida: ${formatCurrency(penaltyAmount)})` : ''}`,
+              registeredBy: appUser?.uid,
+              registeredByName: appUser?.displayName || appUser?.email,
+              registeredAt: getColombiaTimestamp()
+            }];
+            ventas.push(ventaDeDevolucion(actual, refundAmount, 'Devolución por cancelación'));
+          }
+
+          return { cambios, ventas, resultado: null };
+        }
+      );
 
       // Crear mensaje de éxito
       let successMessage = `El servicio técnico de ${service.customerName} se canceló correctamente.`;
@@ -1577,7 +1693,7 @@ export function TechnicalService() {
       setShowCancellationModal(null);
     } catch (error) {
       console.error('Error cancelling technical service:', error);
-      showError('Error al cancelar servicio técnico', 'No se pudo cancelar el servicio técnico. Inténtalo de nuevo.');
+      showError('Error al cancelar servicio técnico', error instanceof Error && error.message ? error.message : 'No se pudo cancelar el servicio técnico. Inténtalo de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -3996,41 +4112,37 @@ export function TechnicalService() {
                 try {
                   setIsLoading(true);
                   
-                  // Actualizar en Firebase
-                  const updatedItems = [...selectedTechnicalService.items, newPart];
-                  const additionalAmount = newPart.totalCost;
-                  // Recalcular shares si usa el nuevo sistema de costos
-                  const svcCostAdd = selectedTechnicalService.serviceCost;
-                  const newPartsCostAdd = updatedItems.reduce((sum, i) => sum + i.totalCost, 0);
-                  const newLaborCostAdd = svcCostAdd !== undefined ? Math.max(0, svcCostAdd - newPartsCostAdd) : undefined;
+                  // Se agrega sobre el servicio guardado, no sobre la copia de la
+                  // pantalla: antes un segundo equipo podia pisar repuestos o
+                  // totales al reescribir `items`.
+                  const updatedService = await actualizarEnTransaccion<TechnicalServicePlan, TechnicalServicePlan>(
+                    COLLECTIONS.TECHNICAL_SERVICES,
+                    selectedTechnicalService.id,
+                    (actual) => {
+                      const updatedItems = [...(actual.items || []), newPart];
+                      const additionalAmount = newPart.totalCost;
+                      // Recalcular shares si usa el nuevo sistema de costos
+                      const svcCostAdd = actual.serviceCost;
+                      const newPartsCostAdd = updatedItems.reduce((sum, i) => sum + i.totalCost, 0);
+                      const newLaborCostAdd = svcCostAdd !== undefined ? Math.max(0, svcCostAdd - newPartsCostAdd) : undefined;
 
-                  await technicalServicesService.update(selectedTechnicalService.id, {
-                    items: updatedItems,
-                    totalAmount: selectedTechnicalService.totalAmount + additionalAmount,
-                    totalCost: selectedTechnicalService.totalCost + additionalAmount,
-                    remainingBalance: selectedTechnicalService.remainingBalance + additionalAmount,
-                    ...(newLaborCostAdd !== undefined && {
-                      laborCost: newLaborCostAdd,
-                      technicianShare: newLaborCostAdd * 0.5,
-                      businessShare: newLaborCostAdd * 0.5,
-                    }),
-                    updatedAt: getColombiaTimestamp()
-                  });
-
-                  // Actualizar estado local
-                  const updatedService = {
-                    ...selectedTechnicalService,
-                    items: updatedItems,
-                    totalAmount: selectedTechnicalService.totalAmount + additionalAmount,
-                    totalCost: selectedTechnicalService.totalCost + additionalAmount,
-                    remainingBalance: selectedTechnicalService.remainingBalance + additionalAmount,
-                    ...(newLaborCostAdd !== undefined && {
-                      laborCost: newLaborCostAdd,
-                      technicianShare: newLaborCostAdd * 0.5,
-                      businessShare: newLaborCostAdd * 0.5,
-                    }),
-                    updatedAt: getColombiaTimestamp()
-                  };
+                      const cambios = {
+                        items: updatedItems,
+                        totalAmount: actual.totalAmount + additionalAmount,
+                        totalCost: actual.totalCost + additionalAmount,
+                        remainingBalance: actual.remainingBalance + additionalAmount,
+                        ...(newLaborCostAdd !== undefined && {
+                          laborCost: newLaborCostAdd,
+                          technicianShare: newLaborCostAdd * 0.5,
+                          businessShare: newLaborCostAdd * 0.5,
+                        })
+                      };
+                      return {
+                        cambios,
+                        resultado: { ...actual, ...cambios, updatedAt: getColombiaTimestamp() }
+                      };
+                    }
+                  );
                   
                   updateTechnicalServiceInState(updatedService);
                   setSelectedTechnicalService(updatedService);
@@ -4043,7 +4155,7 @@ export function TechnicalService() {
                   
                   dispatch(fetchTechnicalServices());
                 } catch (error) {
-                  showError('Error', 'No se pudo agregar el repuesto. Inténtalo de nuevo.');
+                  showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo agregar el repuesto. Inténtalo de nuevo.');
                 } finally {
                   setIsLoading(false);
                 }

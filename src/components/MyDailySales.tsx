@@ -9,25 +9,27 @@ import { Sale } from '../types';
 export function MyDailySales() {
   const { appUser } = useAuth();
   const [todaySales, setTodaySales] = useState<Sale[]>([]);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
-  // Suscripción optimizada: solo ventas del día del vendedor actual
+  // Suscripción: solo ventas del día del vendedor actual
   useEffect(() => {
     if (!appUser?.uid) return;
 
-    console.log('🔥 Iniciando suscripción optimizada a ventas del día');
     const unsubscribe = salesService.subscribeTodaySalesBySalesperson(
       appUser.uid,
+      appUser.email || '',
       (sales) => {
-        console.log('🔥 Ventas del día actualizadas:', sales.length);
+        setErrorCarga(null);
         setTodaySales(sales);
-      }
+      },
+      // Antes un error se mostraba como "No hay ventas registradas".
+      () => setErrorCarga('No se pudieron cargar tus ventas del día. Revisa tu conexión y recarga la página.')
     );
 
     return () => {
-      console.log('🔥 Cerrando suscripción a ventas del día');
       unsubscribe();
     };
-  }, [appUser?.uid]);
+  }, [appUser?.uid, appUser?.email]);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showInvoice, setShowInvoice] = useState(false);
 
@@ -571,7 +573,13 @@ export function MyDailySales() {
         </div>
 
         <div className="overflow-x-auto">
-          {myTodaySales.length === 0 ? (
+          {errorCarga ? (
+            <div className="p-8 text-center">
+              <Receipt className="h-12 w-12 text-red-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-red-700 mb-2">Error al cargar las ventas</h3>
+              <p className="text-gray-600">{errorCarga}</p>
+            </div>
+          ) : myTodaySales.length === 0 ? (
             <div className="p-8 text-center">
               <Receipt className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No hay ventas registradas</h3>
