@@ -1008,7 +1008,7 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
       // Validar datos
       const validation = validateCustomerData(editingCustomer);
       if (!validation.isValid) {
-        showError(validation.errors[0].message);
+        showError('Datos inválidos', validation.errors[0].message);
         return;
       }
 
@@ -1028,7 +1028,7 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
       // Actualizar el estado local del cliente
       setCurrentCustomer(sanitizedCustomer);
       
-      showSuccess('Cliente actualizado correctamente');
+      showSuccess('Cliente actualizado', 'Los datos del cliente se guardaron correctamente');
       setIsEditing(false);
       
       // Notificar al componente padre para refrescar la lista
@@ -1036,7 +1036,7 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
         onCustomerUpdated();
       }
     } catch (error: any) {
-      showError(error.message || 'Error al actualizar el cliente');
+      showError('Error al actualizar el cliente', error.message || 'No se pudo guardar. Inténtalo de nuevo.');
     } finally {
       setIsLoading(false);
     }

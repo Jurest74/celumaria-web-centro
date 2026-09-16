@@ -85,9 +85,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (userDoc.exists()) {
         const userData = userDoc.data() as AppUser;
-        setAppUser(userData);
-        setPermissions(userData.permissions);
-        setPermissionHelpers(createPermissionHelpers(userData.permissions));
+        // Un permiso que no existe en el documento no tiene decision guardada
+        // (se agrego despues de crear el usuario): se cae al default del rol.
+        const permisosEfectivos = {
+          ...DEFAULT_PERMISSIONS[userData.role],
+          ...userData.permissions,
+        };
+        setAppUser({ ...userData, permissions: permisosEfectivos });
+        setPermissions(permisosEfectivos);
+        setPermissionHelpers(createPermissionHelpers(permisosEfectivos));
         
         // No verificar cumpleaños aquí - se hace solo en login genuino
       } else {

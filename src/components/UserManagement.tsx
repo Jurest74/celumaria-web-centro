@@ -232,7 +232,7 @@ export function UserManagement() {
   // Abrir modal de edición de permisos
   const handleEditPermissions = (user: AppUser) => {
     setEditingUser(user);
-    setEditingPermissions({ ...user.permissions });
+    setEditingPermissions({ ...DEFAULT_PERMISSIONS[user.role], ...user.permissions });
     setShowPermissionsModal(true);
   };
 
@@ -287,7 +287,10 @@ export function UserManagement() {
       categories: 'Categorías',
       reports: 'Reportes',
       userManagement: 'Gestión de Usuarios',
-      myDailySales: 'Mis Ventas del Día'
+      myDailySales: 'Mis Ventas del Día',
+      courtesies: 'Cortesías',
+      technicianManagement: 'Gestión de Técnicos',
+      technicianLiquidation: 'Liquidación de Técnicos'
     };
     return labels[permission] || permission;
   };
@@ -309,7 +312,10 @@ export function UserManagement() {
       categories: 'Ver y gestionar categorías de productos',
       reports: 'Acceder a reportes detallados y analytics',
       userManagement: 'Gestionar usuarios, roles y permisos del sistema',
-      myDailySales: 'Ver mis ventas realizadas en el día actual'
+      myDailySales: 'Ver mis ventas realizadas en el día actual',
+      courtesies: 'Ver el historial de cortesías entregadas',
+      technicianManagement: 'Crear, editar y eliminar técnicos',
+      technicianLiquidation: 'Liquidar el trabajo de los técnicos y ver su historial'
     };
     return descriptions[permission] || 'Sin descripción disponible';
   };

@@ -59,7 +59,7 @@ export function TechnicianManagement() {
           isActive: true,
           createdAt: now,
           updatedAt: now,
-          createdBy: user?.uid || null
+          createdBy: user?.id || null
         });
       }
 

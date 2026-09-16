@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { DollarSign, Clock, CheckCircle, Filter, Search, User, Calendar, Eye, Check, FileText, Package, Wrench, TrendingUp, Banknote, Users } from 'lucide-react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, orderBy, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, orderBy, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
@@ -243,32 +243,51 @@ export function TechnicianLiquidationComponent() {
     try {
       const now = new Date().toISOString();
       
+      let omitidos = 0;
+
       // Crear liquidación para cada técnico
       for (const group of groupedServicesForLiquidation) {
+        // Se relee en Firestore antes de pagar: un servicio que ya tiene
+        // liquidationId no se vuelve a liquidar. Cubre el reintento de una
+        // corrida que murió a medias y el listener local desactualizado.
+        const porLiquidar: TechnicalService[] = [];
+        for (const service of group.services) {
+          const snap = await getDoc(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id));
+          if (snap.exists() && !snap.data().liquidationId) {
+            porLiquidar.push(service);
+          } else {
+            omitidos += 1;
+          }
+        }
+        if (porLiquidar.length === 0) continue;
+
+        const detalle = porLiquidar.map(service => {
+          const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
+          const serviceCost = service.serviceCost || 0;
+          // Si no hay repuestos, toda la mano de obra es el serviceCost
+          // Si hay repuestos, la mano de obra es serviceCost - partsCost
+          const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
+          const technicianShare = service.technicianShare || (laborCost * 0.5);
+
+          return {
+            serviceId: service.id,
+            serviceCost: serviceCost,
+            partsCost: partsCost,
+            laborCost: laborCost,
+            technicianShare: technicianShare,
+            customerName: service.customerName,
+            deviceBrandModel: service.deviceBrandModel,
+            completedAt: service.completedAt || now
+          };
+        });
+
         const liquidationData: Omit<TechnicianLiquidation, 'id'> = {
           technicianId: group.technicianId,
           technicianName: group.technicianName,
-          services: group.services.map(service => {
-            const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
-            const serviceCost = service.serviceCost || 0;
-            // Si no hay repuestos, toda la mano de obra es el serviceCost
-            // Si hay repuestos, la mano de obra es serviceCost - partsCost
-            const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
-            const technicianShare = service.technicianShare || (laborCost * 0.5);
-            
-            return {
-              serviceId: service.id,
-              serviceCost: serviceCost,
-              partsCost: partsCost,
-              laborCost: laborCost,
-              technicianShare: technicianShare,
-              customerName: service.customerName,
-              deviceBrandModel: service.deviceBrandModel,
-              completedAt: service.completedAt || now
-            };
-          }),
-          totalLaborCost: group.totalLaborCost,
-          totalTechnicianShare: group.totalTechnicianShare,
+          services: detalle,
+          // Totales sobre lo que realmente se liquida, no sobre lo seleccionado.
+          totalLaborCost: detalle.reduce((sum, s) => sum + s.laborCost, 0),
+          totalTechnicianShare: detalle.reduce((sum, s) => sum + s.technicianShare, 0),
           status: 'completed',
           createdAt: now,
           notes: liquidationNotes
@@ -278,7 +297,7 @@ export function TechnicianLiquidationComponent() {
         const liquidationRef = await addDoc(collection(db, COLLECTIONS.TECHNICIAN_LIQUIDATIONS), liquidationData);
 
         // Actualizar los servicios con el ID de liquidación
-        for (const service of group.services) {
+        for (const service of porLiquidar) {
           await updateDoc(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id), {
             liquidationId: liquidationRef.id,
             liquidatedAt: now
@@ -286,7 +305,12 @@ export function TechnicianLiquidationComponent() {
         }
       }
 
-      showSuccess('Liquidaciones creadas', 'Las liquidaciones se crearon exitosamente');
+      showSuccess(
+        'Liquidaciones creadas',
+        omitidos > 0
+          ? `Las liquidaciones se crearon exitosamente. Se omitieron ${omitidos} servicio(s) que ya estaban liquidados.`
+          : 'Las liquidaciones se crearon exitosamente'
+      );
       
       // Limpiar estados de forma secuencial para evitar problemas de sincronización
       setSelectedServices(new Set());

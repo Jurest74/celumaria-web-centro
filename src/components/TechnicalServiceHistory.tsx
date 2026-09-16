@@ -19,7 +19,6 @@ import {
   AlertCircle,
   Loader2,
   Package,
-  Tool,
   Timer,
   Users,
   CreditCard,
