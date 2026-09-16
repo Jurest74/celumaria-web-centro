@@ -77,7 +77,8 @@ export function Customers() {
     if (salesFilter === 'all' || ventasPedidas.current) return;
     ventasPedidas.current = true;
     setCargandoVentas(true);
-    firebase.loadSales().finally(() => setCargandoVentas(false));
+    // Solo los ultimos 30 dias, que es lo que cuenta este filtro.
+    firebase.loadSalesDesde(startOfDayBogota(subtractDaysBogota(30))).finally(() => setCargandoVentas(false));
   }, [salesFilter, firebase]);
 
   // Helper function to calculate sales count for last 30 days per customer

@@ -20,6 +20,14 @@ interface UsePaginatedSalesOptions {
   useFreshData?: boolean; // Forzar obtener datos del servidor sin caché
 }
 
+// Cuando la consulta filtra por fecha, Firestore obliga a ordenar primero por
+// createdAt, así que el orden por monto o ganancia se aplica aquí.
+function ordenarEnMemoria(sales: Sale[], sortBy: string, sortOrder: string): Sale[] {
+  if (sortBy !== 'total' && sortBy !== 'profit') return sales;
+  const valor = (s: Sale) => sortBy === 'total' ? (s.finalTotal ?? s.total ?? 0) : (s.totalProfit ?? 0);
+  return [...sales].sort((a, b) => sortOrder === 'asc' ? valor(a) - valor(b) : valor(b) - valor(a));
+}
+
 export function usePaginatedSales({
   searchTerm = '',
   dateFilter = 'today',
@@ -66,11 +74,17 @@ export function usePaginatedSales({
       finalEndISO   = applyTimeOfDayBogota(finalEndISO,   timeRange.endTime,   'end');
     }
 
-    // NOTA: Mantenemos los filtros de fecha del lado cliente
-    // (filterSalesClientSide). Las constraints Firestore se podrían reactivar
-    // ahora que los rangos son TZ-independientes, pero requieren índices extra.
-    // if (finalStartISO) constraints.push(where('createdAt', '>=', finalStartISO));
-    // if (finalEndISO)   constraints.push(where('createdAt', '<=', finalEndISO));
+    // El rango de fechas va en la consulta. Antes se traían hasta 1000 ventas
+    // del histórico en cada apertura o cambio de filtro y la fecha se
+    // descartaba en el navegador: con "Hoy" se pagaban 1000 lecturas para
+    // mostrar las ventas del día. Eso fue lo que agotó la cuota de Firestore.
+    //
+    // Es un rango sobre un solo campo (createdAt), así que no exige índice
+    // compuesto, pero obliga a ordenar primero por ese campo; el orden por
+    // monto o ganancia se aplica en memoria sobre lo que llega.
+    const filtraPorFecha = !!(finalStartISO || finalEndISO);
+    if (finalStartISO) constraints.push(where('createdAt', '>=', finalStartISO));
+    if (finalEndISO)   constraints.push(where('createdAt', '<=', finalEndISO));
 
     // Payment method filter
     // NOTA: No aplicar filtro de método de pago en Firestore porque ahora usamos paymentMethods (array)
@@ -81,18 +95,15 @@ export function usePaginatedSales({
       constraints.push(where('salesPersonId', '==', salesPersonFilter));
     }
 
-    // Amount filters (implemented on client side for better flexibility)
-    if (minAmount && minAmount > 0) {
-      constraints.push(where('total', '>=', minAmount));
-    }
-    if (maxAmount && maxAmount > 0) {
-      constraints.push(where('total', '<=', maxAmount));
-    }
+    // Los rangos de monto se aplican en el cliente: un segundo campo con
+    // desigualdad exigiría un índice compuesto nuevo.
 
     // Order
     let orderField = 'createdAt';
-    if (sortBy === 'total') orderField = 'total';
-    if (sortBy === 'profit') orderField = 'totalProfit';
+    if (!filtraPorFecha) {
+      if (sortBy === 'total') orderField = 'total';
+      if (sortBy === 'profit') orderField = 'totalProfit';
+    }
     constraints.push(orderBy(orderField, sortOrder));
 
     // ⚡ OPTIMIZADO: Si hay búsqueda O filtro de fecha, traer más docs
@@ -175,6 +186,11 @@ export function usePaginatedSales({
         }
       }
 
+      // Amount filters (en cliente: ver nota sobre índices en buildQuery)
+      const montoVenta = sale.finalTotal ?? sale.total ?? 0;
+      if (minAmount && minAmount > 0 && montoVenta < minAmount) return false;
+      if (maxAmount && maxAmount > 0 && montoVenta > maxAmount) return false;
+
       // Profit range filter
       if (profitRangeFilter !== 'all') {
         const profitMargin = sale.profitMargin ?? 0;
@@ -196,7 +212,7 @@ export function usePaginatedSales({
 
       return true;
     });
-  }, [searchTerm, paymentMethodFilter, profitRangeFilter, dateFilter, customDateRange]);
+  }, [searchTerm, paymentMethodFilter, profitRangeFilter, dateFilter, customDateRange, timeRange, minAmount, maxAmount]);
 
   // Fetch sales
   const fetchSales = useCallback(async (page: number) => {
@@ -236,6 +252,7 @@ export function usePaginatedSales({
 
         // Aplicar filtros del cliente (fecha, searchTerm, etc.)
         salesList = filterSalesClientSide(salesList);
+        salesList = ordenarEnMemoria(salesList, sortBy, sortOrder);
         console.log('🔍 Resultados después de filtros:', salesList.length);
 
         // Paginar los resultados filtrados en el cliente

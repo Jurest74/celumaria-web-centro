@@ -145,13 +145,12 @@ export function useCellphoneSalesStats({
         endISO = applyTimeOfDayBogotaISO(endISO, timeRange.endTime, 'end');
       }
       
-      if (paymentMethodFilter !== 'all') {
-        constraints.push(where('paymentMethod', '==', paymentMethodFilter));
-      }
-
-      if (salesPersonFilter !== 'all') {
-        constraints.push(where('salesPersonId', '==', salesPersonFilter));
-      }
+      // El rango de fechas va en la consulta y no en el navegador: antes se
+      // traía la colección completa de ventas en cada apertura de la pantalla.
+      // Usa un solo campo, así que no exige índice compuesto; el método de pago
+      // y el vendedor se filtran en memoria sobre ese rango.
+      if (startISO) constraints.push(where('createdAt', '>=', startISO));
+      if (endISO)   constraints.push(where('createdAt', '<=', endISO));
 
       const qFinal = query(q, ...constraints);
       const snap = await getDocs(qFinal);
@@ -159,6 +158,9 @@ export function useCellphoneSalesStats({
 
       // FILTRO DE FECHA EN CLIENTE (TZ-independiente, comparación de strings ISO)
       sales = sales.filter(sale => {
+        if (paymentMethodFilter !== 'all' && sale.paymentMethod !== paymentMethodFilter) return false;
+        if (salesPersonFilter !== 'all' && sale.salesPersonId !== salesPersonFilter) return false;
+
         if (sale.createdAt && (sale.createdAt as any)._methodName === 'serverTimestamp') {
           return false;
         }

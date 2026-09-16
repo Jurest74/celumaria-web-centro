@@ -1,3 +1,4 @@
+import { startOfDayBogota, subtractMonthsBogota } from '../utils/dateUtils';
 import { useEffect, useCallback } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useAppSelector } from './useAppSelector';
@@ -76,7 +77,7 @@ export function useDashboardData() {
 export function useNavigationData(currentView: string) {
   const {
     loadProducts,
-    loadSales,
+    loadSalesDesde,
     loadLayaways,
     loadCustomers,
     loadCategories
@@ -88,11 +89,13 @@ export function useNavigationData(currentView: string) {
 
       switch (currentView) {
         case 'dashboard':
-          // Cargar todos los datos necesarios para el dashboard
-
+          // El Panel solo grafica hasta 2 meses, asi que se piden las ventas de
+          // ese periodo y no la coleccion completa: con el historico crecido,
+          // entrar aqui costaba una lectura por venta de toda la vida del
+          // negocio, y eso fue lo que agoto la cuota diaria de Firestore.
           await Promise.all([
             loadProducts(),
-            loadSales(),
+            loadSalesDesde(startOfDayBogota(subtractMonthsBogota(2))),
             loadLayaways(),
             loadCustomers(),
             loadCategories(),
@@ -114,7 +117,10 @@ export function useNavigationData(currentView: string) {
           break;
 
         case 'sales-history':
-          await loadSales();
+          // Gestion de Ventas trae sus datos con consultas filtradas por fecha
+          // (lista paginada y estadisticas). Antes ademas se descargaba aqui la
+          // coleccion completa de ventas, que nadie usaba en esa pantalla.
+          console.log('📄 Vista de gestión de ventas - datos por consulta filtrada');
           break;
 
         case 'my-daily-sales':
@@ -165,7 +171,7 @@ export function useNavigationData(currentView: string) {
     };
 
     loadDataForView();
-  }, [currentView, loadProducts, loadSales, loadLayaways, loadCustomers, loadCategories]);
+  }, [currentView, loadProducts, loadSalesDesde, loadLayaways, loadCustomers, loadCategories]);
 
   return {};
 }

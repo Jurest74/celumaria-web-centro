@@ -531,11 +531,38 @@ export const productsService = {
  *
  * Lanza StockInsuficienteError con el detalle de lo que falto.
  */
+/**
+ * MODO CONTINGENCIA — poner en false SOLO mientras las lecturas de Firestore
+ * esten bloqueadas (error "Quota exceeded"), y volver a true apenas se
+ * normalice.
+ *
+ * Con false la venta no relee el stock en el servidor: solo lo descuenta. Se
+ * mantiene la verificacion contra el stock que muestra la pantalla, asi que se
+ * puede sobrevender si dos cajas venden la ultima unidad al mismo tiempo o si
+ * la pantalla trae datos viejos, y el stock puede quedar en negativo. Es
+ * recuperable con un ajuste de inventario.
+ */
+export const VERIFICAR_STOCK_EN_SERVIDOR = true;
+
 async function reservarExistencias(
   pedidos: Pedido[],
   escribirDocumento?: (tx: Parameters<Parameters<typeof runTransaction>[1]>[0]) => void
 ): Promise<void> {
   const porProducto = agruparPedidos(pedidos);
+
+  if (!VERIFICAR_STOCK_EN_SERVIDOR) {
+    // Sin lecturas: un solo batch con el documento y los descuentos.
+    const batch = writeBatch(db);
+    escribirDocumento?.(batch as unknown as Parameters<Parameters<typeof runTransaction>[1]>[0]);
+    for (const [productId, { total }] of porProducto) {
+      batch.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+        stock: increment(-total),
+        updatedAt: getColombiaTimestamp()
+      });
+    }
+    await batch.commit();
+    return;
+  }
 
   await runTransaction(db, async (tx) => {
     // Firestore exige que todas las lecturas ocurran antes de cualquier escritura.
@@ -773,6 +800,23 @@ export const salesService = {
         ...cleanedData
       };
     }) as Sale[];
+  },
+
+  /**
+   * Ventas desde una fecha. El Panel de Control y el filtro de clientes solo
+   * necesitan un periodo reciente: traer la coleccion entera cuesta una lectura
+   * por venta del historico cada vez que se abre la pantalla.
+   */
+  async getSince(startISO: string): Promise<Sale[]> {
+    const querySnapshot = await getDocs(query(
+      collection(db, COLLECTIONS.SALES),
+      where('createdAt', '>=', startISO),
+      orderBy('createdAt', 'desc')
+    ));
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...cleanTimestamps(doc.data())
+    })) as Sale[];
   },
 
   async add(sale: Omit<Sale, 'id' | 'createdAt'>): Promise<string> {

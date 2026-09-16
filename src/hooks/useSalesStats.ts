@@ -182,18 +182,16 @@ export function useSalesStats({
         endISO = applyTimeOfDayBogotaISO(endISO, timeRange.endTime, 'end');
       }
 
-      // NOTA: filtros Firestore por fecha quedan comentados; el filtrado se hace
-      // client-side ahora que los rangos son TZ-independientes.
-      // if (startISO) constraints.push(where('createdAt', '>=', startISO));
-      // if (endISO)   constraints.push(where('createdAt', '<=', endISO));
-      
-      if (paymentMethodFilter !== 'all') {
-        constraints.push(where('paymentMethod', '==', paymentMethodFilter));
-      }
-
-      if (salesPersonFilter !== 'all') {
-        constraints.push(where('salesPersonId', '==', salesPersonFilter));
-      }
+      // El rango de fechas va en la consulta: antes se traía la colección
+      // completa de ventas y se filtraba en el navegador, y cada apertura de la
+      // pantalla costaba una lectura por venta del histórico. Eso fue lo que
+      // agotó la cuota diaria de Firestore.
+      //
+      // El rango usa un solo campo (createdAt), así que no exige índice
+      // compuesto. El método de pago y el vendedor se filtran en memoria sobre
+      // ese rango, para no tener que crear índices nuevos.
+      if (startISO) constraints.push(where('createdAt', '>=', startISO));
+      if (endISO)   constraints.push(where('createdAt', '<=', endISO));
 
       // No paginación, traemos todo lo que cumpla los filtros
       const qFinal = query(q, ...constraints);
@@ -202,6 +200,9 @@ export function useSalesStats({
 
       // FILTRO DE FECHA EN CLIENTE (TZ-independiente, comparación de strings ISO)
       let filtered = sales.filter(sale => {
+        if (paymentMethodFilter !== 'all' && sale.paymentMethod !== paymentMethodFilter) return false;
+        if (salesPersonFilter !== 'all' && sale.salesPersonId !== salesPersonFilter) return false;
+
         // Ignorar ventas con timestamps corruptos
         if (sale.createdAt && (sale.createdAt as any)._methodName === 'serverTimestamp') {
           console.warn('⚠️ Venta con timestamp corrupto en stats, ignorando:', sale.id);

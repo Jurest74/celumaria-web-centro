@@ -39,6 +39,7 @@ interface FirebaseContextType {
   forceLoadProducts: () => Promise<void>;
   loadCategories: () => Promise<void>;
   loadSales: () => Promise<void>;
+  loadSalesDesde: (startISO: string) => Promise<void>;
   loadCustomers: () => Promise<void>;
   loadLayaways: () => Promise<void>;
   loadTechnicalServices: () => Promise<void>;
@@ -184,6 +185,32 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       console.log(`✅ Ventas cargadas: ${sales.length}`);
     } catch (error) {
       console.error('❌ Error cargando ventas:', error);
+      dispatch(setSalesError(error instanceof Error ? error.message : 'Error loading sales'));
+    } finally {
+      dispatch(setSalesLoading(false));
+    }
+  }, [dispatch, isSectionFresh, markSectionAsLoaded]);
+
+  // Ventas desde una fecha, para las pantallas que solo miran un periodo
+  // reciente (Panel de Control, filtro de clientes por ventas). Si el store ya
+  // tiene un rango que cubre lo pedido, no se vuelve a consultar.
+  const salesLoadedFromRef = useRef<string | null>(null);
+  const loadSalesDesde = useCallback(async (startISO: string) => {
+    const yaCubierto = salesLoadedFromRef.current !== null && salesLoadedFromRef.current <= startISO;
+    if (yaCubierto && isSectionFresh('sales')) return;
+
+    try {
+      dispatch(setSalesLoading(true));
+      dispatch(setSalesError(null));
+
+      const sales = await salesService.getSince(startISO);
+      dispatch(setSales(sales));
+      salesLoadedFromRef.current = startISO;
+      markSectionAsLoaded('sales');
+
+      console.log(`✅ Ventas cargadas desde ${startISO}: ${sales.length}`);
+    } catch (error) {
+      console.error('❌ Error cargando ventas del periodo:', error);
       dispatch(setSalesError(error instanceof Error ? error.message : 'Error loading sales'));
     } finally {
       dispatch(setSalesLoading(false));
@@ -336,6 +363,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     forceLoadProducts,
     loadCategories,
     loadSales,
+    loadSalesDesde,
     loadCustomers,
     loadLayaways,
     loadTechnicalServices,

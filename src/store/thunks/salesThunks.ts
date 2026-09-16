@@ -1,5 +1,5 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import { doc, writeBatch, increment } from 'firebase/firestore';
+import { doc, getDoc, writeBatch, increment } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { COLLECTIONS } from '../../services/firebase/collections';
 import { updateSale as updateFirebaseSale, deleteSale as deleteFirebaseSale, updateProductStock as updateFirebaseProductStock } from '../slices/firebaseSlice';
@@ -8,6 +8,22 @@ import { salesCalculations } from '../../utils/calculations';
 import { recalcularTrasDevolucion } from '../../utils/salesCalculations';
 import { salesService } from '../../services/firebase/firestore';
 import { getColombiaTimestamp } from '../../utils/dateUtils';
+
+/**
+ * Lee la venta desde Firestore.
+ *
+ * Antes estos thunks la buscaban en el store de Redux, lo que obligaba a
+ * cargar la coleccion completa de ventas al entrar a Gestion de Ventas: una
+ * lectura por venta del historico, cada vez. Leer el documento cuesta una sola
+ * lectura y ademas trae el dato fresco.
+ */
+async function leerVenta(saleId: string): Promise<Sale> {
+  const snap = await getDoc(doc(db, COLLECTIONS.SALES, saleId));
+  if (!snap.exists()) {
+    throw new Error('Venta no encontrada. Puede que ya la hayan eliminado desde otro equipo.');
+  }
+  return { id: snap.id, ...snap.data() } as Sale;
+}
 
 // NOTA: El thunk antiguo `processSale` fue retirado.
 // Sólo despachaba reducers en memoria (addFirebaseSale + updateProductStock)
@@ -32,14 +48,9 @@ export const processProductReturn = createAsyncThunk(
       creditCustomerId?: string;
       refundAmount?: number;
     },
-    { dispatch, getState }
+    { dispatch }
   ) => {
-    const state = getState() as any;
-    const sale = state.firebase.sales.items.find((s: Sale) => s.id === saleId);
-    
-    if (!sale) {
-      throw new Error('Venta no encontrada');
-    }
+    const sale = await leerVenta(saleId);
 
     const itemIndex = sale.items.findIndex((item: SaleItem) => item.productId === productId);
     if (itemIndex === -1) {
@@ -148,13 +159,8 @@ export const processProductReturn = createAsyncThunk(
 
 export const deleteSale = createAsyncThunk(
   'sales/deleteSale',
-  async (saleId: string, { dispatch, getState }) => {
-    const state = getState() as any;
-    const sale = state.firebase.sales.items.find((s: Sale) => s.id === saleId);
-    
-    if (!sale) {
-      throw new Error('Venta no encontrada');
-    }
+  async (saleId: string, { dispatch }) => {
+    const sale = await leerVenta(saleId);
 
     // Delete from Firebase (this will also restore product stock automatically
     // for ventas regulares; las de tipo layaway_*/technical_service_* no tocan stock)
