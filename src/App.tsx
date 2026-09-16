@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Provider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from './store';
@@ -8,26 +8,32 @@ import { NotificationProvider } from './contexts/NotificationContext';
 import { PrivateRoute } from './components/PrivateRoute';
 import { ProtectedComponent } from './components/ProtectedComponent';
 import { Layout } from './components/Layout';
-import { Dashboard } from './components/Dashboard';
-import { Inventory } from './components/Inventory';
-import { Categories } from './components/Categories';
-import { Purchases } from './components/Purchases';
-import { Sales } from './components/Sales';
-import { SalesHistory } from './components/SalesHistory';
-import { TechnicalServiceHistory } from './components/TechnicalServiceHistory';
-import { PurchasesHistory } from './components/PurchasesHistory';
-import { Customers } from './components/Customers';
-import { Layaway } from './components/Layaway';
-import { TechnicalService } from './components/TechnicalService';
-import { Reports } from './components/Reports';
-import { UserManagement } from './components/UserManagement';
-import { TechnicianManagement } from './components/TechnicianManagement';
 import { TechnicianLiquidationComponent } from './components/TechnicianLiquidation';
-import { MyDailySales } from './components/MyDailySales';
-import { Courtesies } from './components/Courtesies';
 import { BirthdayNotification } from './components/BirthdayNotification';
 import { useNavigationData } from './hooks/useOnDemandData';
 import { useAuth } from './contexts/AuthContext';
+
+// Cada pantalla se descarga cuando se entra a ella. Antes todas se
+// importaban de forma estatica y el navegador bajaba el sistema completo
+// —incluida la libreria de graficas, que solo usa Reportes— para mostrar
+// el login.
+const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
+const Inventory = lazy(() => import('./components/Inventory').then(m => ({ default: m.Inventory })));
+const Categories = lazy(() => import('./components/Categories').then(m => ({ default: m.Categories })));
+const Purchases = lazy(() => import('./components/Purchases').then(m => ({ default: m.Purchases })));
+const Sales = lazy(() => import('./components/Sales').then(m => ({ default: m.Sales })));
+const SalesHistory = lazy(() => import('./components/SalesHistory').then(m => ({ default: m.SalesHistory })));
+const TechnicalServiceHistory = lazy(() => import('./components/TechnicalServiceHistory').then(m => ({ default: m.TechnicalServiceHistory })));
+const PurchasesHistory = lazy(() => import('./components/PurchasesHistory').then(m => ({ default: m.PurchasesHistory })));
+const Customers = lazy(() => import('./components/Customers').then(m => ({ default: m.Customers })));
+const Layaway = lazy(() => import('./components/Layaway').then(m => ({ default: m.Layaway })));
+const TechnicalService = lazy(() => import('./components/TechnicalService').then(m => ({ default: m.TechnicalService })));
+const Reports = lazy(() => import('./components/Reports').then(m => ({ default: m.Reports })));
+const UserManagement = lazy(() => import('./components/UserManagement').then(m => ({ default: m.UserManagement })));
+const TechnicianManagement = lazy(() => import('./components/TechnicianManagement').then(m => ({ default: m.TechnicianManagement })));
+const MyDailySales = lazy(() => import('./components/MyDailySales').then(m => ({ default: m.MyDailySales })));
+const Courtesies = lazy(() => import('./components/Courtesies').then(m => ({ default: m.Courtesies })));
+
 
 function AppContent() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -158,7 +164,15 @@ function AppContent() {
   return (
     <>
       <Layout currentView={currentView} onViewChange={setCurrentView}>
-        {renderCurrentView()}
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-16 text-sm text-gray-500">
+              Cargando…
+            </div>
+          }
+        >
+          {renderCurrentView()}
+        </Suspense>
       </Layout>
       
       {/* Notificación de cumpleaños */}
