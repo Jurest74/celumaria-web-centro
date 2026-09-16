@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, AlertTriangle, AlertCircle, Settings, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
-import { selectTechnicalServices, selectProducts, selectCustomers } from '../store/selectors';
+import { selectTechnicalServices, selectCustomers } from '../store/selectors';
 import { technicalServicesService, courtesiesService } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, PaymentMethod, Technician } from '../types';
@@ -15,7 +15,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { fetchProducts } from '../store/thunks/productsThunks';
 import { fetchTechnicalServices, fetchTechnicalServicesByStatus } from '../store/thunks/technicalServicesThunks';
 // ⚡ OPTIMIZADO: No usar useSectionRealtime - datos se cargan al navegar
-import { useFirebase } from '../contexts/FirebaseContext';
 
 // AddProductsToLayawayPOS no se usa más - los repuestos se agregan al crear el servicio
 import { CustomerComboBox } from './CustomerComboBox';
@@ -91,27 +90,8 @@ export function TechnicalService() {
   // Eliminar producto no recogido y devolver al inventario
 
   // Eliminar servicio técnico
-  const handleDeleteTechnicalService = async (layaway: TechnicalServicePlan) => {
-    showConfirm(
-      'Confirmar eliminación',
-      `¿Seguro que quieres eliminar el servicio técnico de ${layaway.customerName}? Esta acción no se puede deshacer.`,
-      async () => {
-        setIsLoading(true);
-        try {
-          await technicalServicesService.delete(layaway.id);
-          showSuccess('Servicio técnico eliminado', 'El servicio técnico fue eliminado exitosamente.');
-          dispatch(fetchTechnicalServices());
-        } catch (error) {
-          showError('Error', 'No se pudo eliminar el servicio técnico.');
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    );
-  };
 
   const dispatch = useAppDispatch();
-  const firebase = useFirebase();
   
   // Estado del filtro (debe estar antes de los useEffects que lo usan)
   const [statusFilter, setStatusFilter] = useState('active');
@@ -121,7 +101,6 @@ export function TechnicalService() {
   // Si el usuario está quieto aquí, no necesita ver actualizaciones de otros
 
   const allTechnicalServices = useAppSelector(selectTechnicalServices);
-  const products = useAppSelector(selectProducts);
   const customers = useAppSelector(selectCustomers);
   const { showSuccess, showError, showConfirm } = useNotification();
   const { appUser } = useAuth();
@@ -152,18 +131,7 @@ export function TechnicalService() {
   const [penaltyAmount, setPenaltyAmount] = useState('');
 
   // Función para calcular mano de obra automáticamente
-  const calculateLaborCost = () => {
-    const totalPartsCost = createServiceParts.reduce((sum, part) => sum + (part.quantity * part.partCost), 0);
-    return Math.max(0, serviceCost - totalPartsCost);
-  };
-
   // Función para calcular las partes del técnico y negocio
-  const calculateShares = () => {
-    const laborCost = calculateLaborCost();
-    const technicianShare = laborCost * 0.5; // 50% para el técnico
-    const businessShare = laborCost * 0.5;   // 50% para el negocio
-    return { laborCost, technicianShare, businessShare };
-  };
 
   // Function to reset create form
   const resetCreateForm = () => {
@@ -1495,92 +1463,6 @@ export function TechnicalService() {
     );
   };
 
-  const handleRevertPickup = async (itemId: string, pickupId: string) => {
-    if (!selectedTechnicalService) return;
-
-    const item = selectedTechnicalService.items.find(i => i.id === itemId);
-    if (!item) return;
-
-    const pickupToRevert = item.pickedUpHistory?.find(p => p.id === pickupId);
-    if (!pickupToRevert) return;
-
-    showConfirm(
-      'Confirmar reversión de recogida',
-      `¿Estás seguro de que quieres revertir la recogida de ${pickupToRevert.quantity} unidades de "${item.productName}"? Estas unidades volverán a estar disponibles para recoger.`,
-      async () => {
-        setIsLoading(true);
-        try {
-          // Actualizar los items removiendo la recogida específica
-          const updatedItems = selectedTechnicalService.items.map(i => {
-            if (i.id === itemId) {
-              // Filtrar la recogida que se va a revertir
-              const updatedPickupHistory = i.pickedUpHistory?.filter(p => p.id !== pickupId) || [];
-              
-              // Recalcular cantidad recogida
-              const newPickedUpQuantity = updatedPickupHistory.reduce(
-                (sum, pickup) => sum + pickup.quantity, 0
-              );
-
-              return {
-                ...i,
-                pickedUpQuantity: newPickedUpQuantity,
-                pickedUpHistory: updatedPickupHistory
-              };
-            }
-            return i;
-          });
-
-          // Si el plan estaba completado y ahora tiene productos sin recoger completamente,
-          // cambiar status a active
-          let newStatus = selectedTechnicalService.status;
-          const hasUnpickedItems = updatedItems.some(item => 
-            (item.pickedUpQuantity || 0) < item.quantity
-          );
-
-          if (selectedTechnicalService.status === 'completed' && hasUnpickedItems) {
-            newStatus = 'active';
-          }
-
-          // Actualizar en Firebase
-          const updateData: any = {
-            items: updatedItems,
-            status: newStatus
-          };
-
-          await technicalServicesService.update(selectedTechnicalService.id, updateData);
-
-          // Actualizar estado local inmediatamente
-          const updatedLayaway = {
-            ...selectedTechnicalService,
-            items: updatedItems,
-            status: newStatus,
-            updatedAt: getColombiaTimestamp()
-          };
-
-          updateTechnicalServiceInState(updatedLayaway);
-          
-          showSuccess(
-            'Recogida revertida',
-            `Se ha revertido la recogida de ${pickupToRevert.quantity} unidades de "${item.productName}". ${
-              newStatus === 'active' && selectedTechnicalService.status === 'completed'
-                ? 'El servicio técnico ha vuelto a estado activo.'
-                : 'Las unidades están disponibles para recoger nuevamente.'
-            }`
-          );
-
-          // Forzar actualización desde Firebase
-          setTimeout(() => forceRefreshTechnicalService(selectedTechnicalService.id), 1000);
-          dispatch(fetchTechnicalServices());
-
-        } catch (error) {
-          console.error('Error reverting pickup:', error);
-          showError('Error al revertir recogida', 'No se pudo revertir la recogida. Inténtalo de nuevo.');
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    );
-  };
 
   // Función correcta para cancelar SERVICIOS TÉCNICOS (no planes separé)
   const handleCancelTechnicalService = async (service: TechnicalServicePlan) => {

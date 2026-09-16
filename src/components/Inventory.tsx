@@ -2,8 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Search, Edit, Trash2, AlertTriangle, Package, TrendingUp, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 import { addDoc, collection } from 'firebase/firestore';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { useAppDispatch } from '../hooks/useAppDispatch';
-import { selectProducts, selectActiveCategories } from '../store/selectors';
+import { selectActiveCategories } from '../store/selectors';
 import { productsService } from '../services/firebase/firestore';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { db } from '../config/firebase';
@@ -17,10 +16,8 @@ import { getColombiaTimestamp } from '../utils/dateUtils';
 
 export function Inventory() {
   // Redux selectors para estadísticas generales
-  const allProducts = useAppSelector(selectProducts);
   const categories = useAppSelector(selectActiveCategories);
   const { showSuccess, showError, showConfirm } = useNotification();
-  const dispatch = useAppDispatch();
   const firebase = useFirebase();
   const { appUser } = useAuth();
   
@@ -369,7 +366,6 @@ export function Inventory() {
   const outOfStock = useMemo(() => allProductsLocal.filter((p: Product) => p.stock === 0).length, [allProductsLocal, refreshKey]);
   const lowStock = useMemo(() => allProductsLocal.filter((p: Product) => p.stock > 0 && p.stock <= 5).length, [allProductsLocal, refreshKey]);
   const totalInventoryValue = useMemo(() => allProductsLocal.reduce((acc: number, p: Product) => acc + (typeof p.purchasePrice === 'number' && typeof p.stock === 'number' ? p.purchasePrice * p.stock : 0), 0), [allProductsLocal, refreshKey]);
-  const totalPotentialSales = useMemo(() => allProductsLocal.reduce((acc: number, p: Product) => acc + (typeof p.salePrice === 'number' && typeof p.stock === 'number' ? p.salePrice * p.stock : 0), 0), [allProductsLocal, refreshKey]);
 
 
   return (
@@ -778,9 +774,6 @@ export function Inventory() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredProducts.map((product) => {
                 const margin = calculateMargin(product.purchasePrice, product.salePrice);
-                const profit = (typeof product.salePrice === 'number' && typeof product.purchasePrice === 'number') 
-                  ? product.salePrice - product.purchasePrice 
-                  : 0;
                 return (
                   <tr key={product.id} className="hover:bg-gray-50">
                     <td className="px-1 sm:px-3 py-2">

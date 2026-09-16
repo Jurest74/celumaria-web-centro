@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
-  Plus, 
   Search, 
   Edit, 
   Trash2, 
@@ -13,9 +12,6 @@ import {
   Gift,
   X,
   UserPlus,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
   Eye,
   RefreshCw,
   ArrowUpRight
@@ -27,7 +23,6 @@ import { usePaginatedCustomers } from '../hooks/usePaginatedCustomers';
 import { useNotification } from '../contexts/NotificationContext';
 import { Customer } from '../types';
 import { formatCurrency } from '../utils/currency';
-import { useAuth } from '../contexts/AuthContext';
 import { useCustomerSalesStats } from '../hooks/useCustomerSalesStats';
 import {
   isBirthdayToday,
@@ -51,7 +46,6 @@ export function Customers() {
   const layaways = useAppSelector(selectLayaways);
   const sales = useAppSelector(selectSales);
   const { showSuccess, showError, showWarning, showConfirm } = useNotification();
-  const { user } = useAuth();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -61,8 +55,8 @@ export function Customers() {
   const [operationLoading, setOperationLoading] = useState<{ [key: string]: boolean }>({});
   const [birthdayFilter, setBirthdayFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const [salesFilter, setSalesFilter] = useState<'all' | 'high' | 'medium' | 'low' | 'none'>('all');
-  const [sortBy, setSortBy] = useState<'name' | 'createdAt'>('name');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [sortBy] = useState<'name' | 'createdAt'>('name');
+  const [sortOrder] = useState<'asc' | 'desc'>('asc');
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [selectedCustomerForStats, setSelectedCustomerForStats] = useState<Customer | null>(null);
   const itemsPerPage = 10;
@@ -117,14 +111,6 @@ export function Customers() {
     });
   }, [rawPaginatedCustomers, getSalesCountForCustomer, salesFilter]);
 
-  const handleSort = useCallback((field: 'name' | 'createdAt') => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortOrder('asc');
-    }
-  }, [sortBy, sortOrder]);
 
   // Memoized statistics calculations
   const customerStats = useMemo(() => ({
@@ -270,24 +256,6 @@ export function Customers() {
   }, [layaways, refetch, showWarning, showConfirm, showSuccess, showError, setOperationLoadingState]);
 
 
-  const formatCreatedAt = (createdAt: string | undefined) => {
-    if (!createdAt) return 'Sin fecha';
-    
-    try {
-      const date = new Date(createdAt);
-      if (isNaN(date.getTime())) {
-        return 'Sin fecha';
-      }
-      return date.toLocaleDateString('es-ES', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        timeZone: 'America/Bogota'
-      });
-    } catch (error) {
-      return 'Sin fecha';
-    }
-  };
 
   const startEdit = (customer: Customer) => {
     setEditingCustomer(customer);
@@ -989,8 +957,6 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
     averageTransaction, 
     bestMonth, 
     bestDay, 
-    monthlyData,
-    yearlyData,
     allTimeRanking,
     loading: statsLoading, 
     error: statsError 

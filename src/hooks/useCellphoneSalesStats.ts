@@ -38,10 +38,6 @@ interface CellphoneSalesStats {
 }
 
 // Corrige fechas tipo 'YYYY-MM-DD' para zona local
-function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year, month - 1, day, 0, 0, 0, 0);
-}
 
 export function useCellphoneSalesStats({
   searchTerm = '',
@@ -208,7 +204,6 @@ export function useCellphoneSalesStats({
         if (cellphoneItems.length > 0) {
           // Calcular solo los valores de los items de celulares
           const itemsSales = cellphoneItems.reduce((sum, item) => sum + (item.totalRevenue || 0), 0);
-          const itemsProfit = cellphoneItems.reduce((sum, item) => sum + (item.profit || 0), 0);
           const itemsCost = cellphoneItems.reduce((sum, item) => sum + (item.totalCost || 0), 0);
           
           // Para descuentos y recargos, prorratear según el porcentaje de celulares en la venta

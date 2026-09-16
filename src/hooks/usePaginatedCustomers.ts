@@ -21,7 +21,7 @@ export function usePaginatedCustomers({
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [, setLastDoc] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPrevPage, setHasPrevPage] = useState(false);
@@ -52,7 +52,7 @@ export function usePaginatedCustomers({
   }, []);
 
   // Helper to build Firestore query
-  const buildQuery = useCallback(async (page: number, prevLastDoc: any = null) => {
+  const buildQuery = useCallback(async (_page: number, prevLastDoc: any = null) => {
     let q = collection(db, 'customers');
     let constraints: any[] = [];
 

@@ -10,7 +10,7 @@ import { formatCurrency } from '../utils/currency';
 export function Dashboard() {
   // ⚡ OPTIMIZADO: Los datos se cargan desde useNavigationData
   // No necesitamos cargar aquí para evitar doble carga
-  const [loading, setLoading] = useState(false);
+  const [loading] = useState(false);
   
   // Selectores globales
   const products = useAppSelector(selectProducts);

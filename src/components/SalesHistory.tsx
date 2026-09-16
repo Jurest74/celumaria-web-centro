@@ -14,7 +14,6 @@ import { useAppSelector } from '../hooks/useAppSelector';
 import { processProductReturn, deleteSale } from '../store/thunks/salesThunks';
 import { fetchCustomers } from '../store/thunks/customersThunks';
 import { customersService } from '../services/firebase/firestore';
-import { useAuth } from '../contexts/AuthContext';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -101,7 +100,6 @@ export function SalesHistory() {
   const dispatch = useAppDispatch();
   const customers = useAppSelector(state => state.firebase.customers.items);
   const customersLoading = useAppSelector(state => state.firebase.customers.loading);
-  const { appUser } = useAuth();
   const firebase = useFirebase();
 
   // Load customers if not already loaded

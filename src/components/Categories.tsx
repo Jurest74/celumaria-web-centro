@@ -6,7 +6,6 @@ import {
   Trash2, 
   Tag, 
   Package, 
-  Eye, 
   X,
   Palette,
   Hash,
@@ -30,7 +29,6 @@ const ICON_OPTIONS = [
 ];
 
 // Elimina el estado y filtro de isActive
-type CategoryWithoutActive = Omit<Category, 'isActive'>;
 
 export function Categories() {
   // ⚡ OPTIMIZADO: NO usar listeners - datos se cargan al navegar

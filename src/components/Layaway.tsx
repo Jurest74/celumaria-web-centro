@@ -10,7 +10,6 @@ import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } fro
 import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
-import { useFirebase } from '../contexts/FirebaseContext';
 
 import { fetchProducts } from '../store/thunks/productsThunks';
 import { fetchLayaways } from '../store/thunks/layawaysThunks';
@@ -127,24 +126,6 @@ export function Layaway() {
   };
 
   // Eliminar plan separe
-  const handleDeleteLayaway = async (layaway: LayawayPlan) => {
-    showConfirm(
-      'Confirmar eliminación',
-      `¿Seguro que quieres eliminar el plan separe de ${layaway.customerName}? Esta acción no se puede deshacer.`,
-      async () => {
-        setIsLoading(true);
-        try {
-          await layawaysService.delete(layaway.id);
-          showSuccess('Plan eliminado', 'El plan separe fue eliminado exitosamente.');
-          dispatch(fetchLayaways());
-        } catch (error) {
-          showError('Error', 'No se pudo eliminar el plan separe.');
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    );
-  };
 
   // Estado del filtro (debe estar antes de los useEffects que lo usan)
   const [statusFilter, setStatusFilter] = useState('active');
@@ -153,7 +134,6 @@ export function Layaway() {
   // Los datos se recargan automáticamente al navegar a esta sección
 
   const dispatch = useAppDispatch();
-  const firebase = useFirebase();
 
   // Cargar planes separe al montar el componente.
   // Antes se leian aparte y se despachaba fetchLayaways.fulfilled, una accion
@@ -1947,15 +1927,6 @@ export function Layaway() {
                   >
                     <Eye className="h-5 w-5" />
                   </button>
-                  {/*
-                  <button
-                    onClick={() => handleDeleteLayaway(layaway)}
-                    className="text-red-600 hover:text-red-900 p-1 rounded hover:bg-red-50 transition-colors"
-                    title="Eliminar plan"
-                    disabled={isLoading}
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </button>*/}
                   
                 </div>
               </div>

@@ -1,26 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import {
-  History,
   Search,
   Calendar,
   DollarSign,
   TrendingUp,
   Eye,
-  Download,
   Settings,
   User,
-  Clock,
   ChevronDown,
   ChevronUp,
   BarChart3,
-  CalendarRange,
   X,
-  CheckCircle,
-  AlertCircle,
-  Loader2,
-  Package,
-  Timer,
-  Users,
   CreditCard,
   Banknote,
   Receipt,
@@ -90,9 +80,6 @@ function getValidDate(date: any): Date | null {
 }
 
 // Interpreta 'YYYY-MM-DD' como mediodía día calendario Colombia (instante UTC absoluto)
-function parseLocalDate(dateStr: string): Date {
-  return new Date(`${dateStr}T12:00:00.000${BOGOTA_OFFSET}`);
-}
 
 export function TechnicalServiceHistory() {
   useSectionRealtime('technicalServices');
@@ -444,26 +431,8 @@ export function TechnicalServiceHistory() {
     }
   };
 
-  const getDisplayDate = (service: TechnicalService) => {
-    // Si el servicio está finalizado, mostrar fecha de finalización
-    if (service.status === 'completed' && service.completedAt) {
-      return service.completedAt;
-    }
-    // En todos los demás casos, mostrar fecha de creación
-    return service.createdAt;
-  };
 
-  const getDateLabel = () => {
-    return 'Fecha';
-  };
 
-  const getDateType = (service: TechnicalService) => {
-    if (statusFilter === 'completed') {
-      if (service.completedAt) return 'Finalizado';
-      return 'Creado';
-    }
-    return 'Creado';
-  };
 
   return (
     <div className="space-y-6">

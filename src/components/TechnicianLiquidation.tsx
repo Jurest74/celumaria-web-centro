@@ -5,12 +5,10 @@ import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
 import { formatCurrency } from '../utils/currency';
-import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
 import { bogotaDateKey, subtractDaysBogota } from '../utils/dateUtils';
 
 export function TechnicianLiquidationComponent() {
-  const { user, appUser } = useAuth();
   const { showSuccess, showError, showWarning } = useNotification();
   
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');

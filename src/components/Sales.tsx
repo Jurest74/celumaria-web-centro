@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Minus, ShoppingCart, DollarSign, Receipt, X, User, Search, Wallet, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { selectProducts, selectSales } from '../store/selectors';
+import { selectProducts } from '../store/selectors';
 import { salesService, courtesiesService } from '../services/firebase/firestore';
 import { SaleItem } from '../types';
 import type { Customer } from '../types';
@@ -13,7 +13,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useFirebase } from '../contexts/FirebaseContext';
 import {
   calculateSaleTotal as calcSaleTotal,
-  calculateCreditUsed,
   getTotalPaidAmount,
   type ExtendedPaymentMethod
 } from '../utils/salesCalculations';
@@ -362,23 +361,12 @@ export function Sales() {
   // Los cambios se verán al refrescar o cambiar de vista y volver
 
   const products = useAppSelector(selectProducts);
-  const sales = useAppSelector(selectSales);
   const customers = useAppSelector(state => state.firebase.customers.items);
   const { showSuccess, showError, showWarning } = useNotification();
   const { appUser } = useAuth();
   const firebase = useFirebase();
 
   // Helper function to calculate sales count for last 30 days per customer
-  const getSalesCountForCustomer = useCallback((customerId: string) => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    return sales.filter((sale: any) => {
-      if (sale.customerId !== customerId) return false;
-      const saleDate = new Date(sale.createdAt);
-      return saleDate >= thirtyDaysAgo;
-    }).length;
-  }, [sales]);
 
   // Estado del formulario de venta
   const [saleForm, setSaleForm] = useState<SaleFormState>({
@@ -413,9 +401,7 @@ export function Sales() {
 
   // Referencias
   const productInputRef = useRef<HTMLInputElement>(null);
-  const quantityInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [selectedProductIndex, setSelectedProductIndex] = useState(-1);
   const [needsScroll, setNeedsScroll] = useState(false);
   
   // Referencias para detección de escaneo automático
@@ -541,14 +527,6 @@ export function Sales() {
     [saleForm.currentSale, saleForm.discount, saleForm.paymentMethod, saleForm.paymentMethods, saleForm.useMultiplePayments]
   );
 
-  const creditUsed = useMemo(() => {
-    if (!customerState.selectedCustomer || !customerState.applyCredit) return 0;
-    return calculateCreditUsed(
-      customerState.selectedCustomer.credit,
-      saleTotal.total,
-      saleForm.paymentMethods
-    );
-  }, [customerState.selectedCustomer, customerState.applyCredit, saleTotal.total, saleForm.paymentMethods]);
 
   const totalPaidAmount = useMemo(() => 
     getTotalPaidAmount(
@@ -957,7 +935,7 @@ export function Sales() {
   }, [saleForm, customerState, saleTotal, updateUIState, updateCustomerState, showWarning, showError, showSuccess, appUser]);
 
   // Usar los valores memoizados del saleTotal
-  const { subtotal, appliedDiscount, total } = saleTotal;
+  const { subtotal, total } = saleTotal;
 
   return (
     <div 

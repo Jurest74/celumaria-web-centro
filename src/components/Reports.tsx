@@ -21,7 +21,7 @@ import {
 export function Reports() {
   const products = useAppSelector(selectProducts);
   // Usar el mismo hook que SalesHistory para totales
-  const [dateFilter, setDateFilter] = React.useState('custom');
+  const [dateFilter] = React.useState('custom');
   const [customDateRange, setCustomDateRange] = React.useState(() => ({
     startDate: (() => {
       const d = new Date();
@@ -37,13 +37,7 @@ export function Reports() {
     totalSales,
     totalProfit,
     totalCost,
-    totalDiscounts,
-    averageTransaction,
     profitMargin,
-    transactionCount,
-    loading,
-    error,
-    refetch,
     filteredSales,
     periodComparison
   } = useSalesStats({
@@ -75,11 +69,6 @@ export function Reports() {
   };
 
   // Filtrar ventas por rango de fechas usando fecha local (sin desfase UTC)
-  const getLocalDateString = (date: Date) => {
-    return date.getFullYear() + '-' +
-      String(date.getMonth() + 1).padStart(2, '0') + '-' +
-      String(date.getDate()).padStart(2, '0');
-  };
 
 
   // Preparar datos para los gráficos y tablas usando solo products y useSalesStats
