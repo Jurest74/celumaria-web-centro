@@ -820,7 +820,7 @@ export function Sales() {
       return;
     }
 
-    const { subtotal, appliedDiscount, total, totalCost, totalProfit, profitMargin } = saleTotal;
+    const { subtotal, appliedDiscount, total, totalCost, totalProfit, profitMargin, finalTotal, customerSurcharge, totalCommissions } = saleTotal;
 
     if (total <= 0) {
       showError('Total inválido', 'El total de la venta debe ser mayor a cero');
@@ -867,11 +867,18 @@ export function Sales() {
       if (saleForm.useMultiplePayments && saleForm.paymentMethods.length > 0) {
         saleData.paymentMethods = saleForm.paymentMethods;
         saleData.useMultiplePayments = true;
-        // El finalTotal incluye recargos por métodos de pago
-        if (finalTotal !== total) {
-          saleData.finalTotal = finalTotal;
-          saleData.customerSurcharge = customerSurcharge;
-        }
+      }
+
+      // El finalTotal incluye el recargo que paga el cliente por el metodo de
+      // pago. Se guarda en los dos modos: antes solo se escribia en pagos
+      // multiples, asi que una venta con tarjeta en pago unico quedaba
+      // registrada sin el recargo que el cliente si habia pagado.
+      if (finalTotal !== total) {
+        saleData.finalTotal = finalTotal;
+        saleData.customerSurcharge = customerSurcharge;
+      }
+      if (totalCommissions > 0) {
+        saleData.totalCommissions = totalCommissions;
       }
 
       if (appUser) {
@@ -952,7 +959,7 @@ export function Sales() {
   }, [saleForm, customerState, saleTotal, updateUIState, updateCustomerState, showWarning, showError, showSuccess, appUser]);
 
   // Usar los valores memoizados del saleTotal
-  const { subtotal, appliedDiscount, total, finalTotal, customerSurcharge } = saleTotal;
+  const { subtotal, appliedDiscount, total } = saleTotal;
 
   return (
     <div 

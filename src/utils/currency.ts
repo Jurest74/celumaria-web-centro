@@ -51,9 +51,14 @@ export const formatNumberInput = (value: string | number): string => {
   return new Intl.NumberFormat('es-CO').format(num);
 };
 
-// Parse formatted input back to number
+// Parse formatted input back to number.
+// Los montos son pesos enteros positivos. En formato colombiano el punto
+// separa miles, asi que una coma solo puede venir de centavos y un menos de
+// un negativo: ninguno es valido aqui. Antes se descartaban los dos en
+// silencio, y "1.500,50" entraba como 150050 y "-5000" como 5000.
 export const parseNumberInput = (formattedValue: string): number => {
-  // Remove all non-digit characters and parse
+  if (typeof formattedValue !== 'string') return 0;
+  if (/[,-]/.test(formattedValue)) return 0;
   const cleanValue = formattedValue.replace(/[^\d]/g, '');
   return cleanValue ? parseInt(cleanValue, 10) : 0;
 };

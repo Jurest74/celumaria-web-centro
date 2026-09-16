@@ -5,6 +5,7 @@ import { COLLECTIONS } from '../../services/firebase/collections';
 import { updateSale as updateFirebaseSale, deleteSale as deleteFirebaseSale, updateProductStock as updateFirebaseProductStock } from '../slices/firebaseSlice';
 import { Sale, SaleItem } from '../../types';
 import { salesCalculations } from '../../utils/calculations';
+import { recalcularTrasDevolucion } from '../../utils/salesCalculations';
 import { salesService } from '../../services/firebase/firestore';
 import { getColombiaTimestamp } from '../../utils/dateUtils';
 
@@ -62,17 +63,28 @@ export const processProductReturn = createAsyncThunk(
       };
     }
 
-    // Recalcular totales de la venta
+    // Recalcular totales de la venta.
+    // recalcularTrasDevolucion baja el recargo y la comision en la misma
+    // proporcion que el total. Sin esto quedaban con el valor previo a la
+    // devolucion: finalTotal no bajaba nunca y los reportes, que leen
+    // finalTotal || total, seguian contando la plata devuelta como ingreso.
     const recalculatedSale = salesCalculations.calculateSaleTotal(updatedItems, sale.discount);
-    
+    const ajustado = recalcularTrasDevolucion(sale, {
+      total: recalculatedSale.total,
+      totalCost: recalculatedSale.totalCost,
+    });
+
     // Crear objeto de venta actualizada
     const updatedSaleData = {
       items: updatedItems,
       subtotal: recalculatedSale.subtotal,
-      total: recalculatedSale.total,
-      totalCost: recalculatedSale.totalCost,
-      totalProfit: recalculatedSale.totalProfit,
-      profitMargin: recalculatedSale.profitMargin
+      total: ajustado.total,
+      totalCost: ajustado.totalCost,
+      totalProfit: ajustado.totalProfit,
+      profitMargin: ajustado.profitMargin,
+      totalCommissions: ajustado.totalCommissions,
+      customerSurcharge: ajustado.customerSurcharge,
+      finalTotal: ajustado.finalTotal
     };
 
     // Actualización atómica en Firestore: ambas operaciones en un mismo batch.

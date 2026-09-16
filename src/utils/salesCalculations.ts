@@ -37,14 +37,20 @@ export const calculateSaleTotal = (
   
   if (useMultiplePayments) {
     totalCommissions = paymentMethods.reduce((sum, payment) => sum + (payment.commission || 0), 0);
-    customerSurcharge = paymentMethods.reduce((sum, payment) => sum + calculateCustomerSurcharge(payment.method, payment.amount), 0);
+    // El cajero teclea el monto con el recargo ya sumado, asi que el recargo
+    // es lo que entro por encima del precio. Calcularlo como un 3% del monto
+    // tecleado lo aplicaba sobre una cifra que ya lo incluia.
+    const cobrado = paymentMethods.reduce((sum, payment) => sum + payment.amount, 0);
+    customerSurcharge = Math.max(0, cobrado - total);
   } else {
     totalCommissions = calculatePaymentCommission(paymentMethod, total);
     customerSurcharge = calculateCustomerSurcharge(paymentMethod, total);
   }
-  
+
   const finalTotal = total + customerSurcharge;
-  const totalProfit = total - totalCost - totalCommissions;
+  // El negocio recibe finalTotal: el recargo que paga el cliente es ingreso,
+  // igual que la comision del datafono es un egreso.
+  const totalProfit = finalTotal - totalCost - totalCommissions;
   const profitMargin = total > 0 ? (totalProfit / total) * 100 : 0;
   
   return { 
@@ -78,12 +84,49 @@ export const getTotalPaidAmount = (
   applyCredit: boolean,
   total: number
 ): number => {
-  let paid = paymentMethods.reduce((sum, payment) => sum + payment.amount, 0);
-  
+  // Se excluyen las entradas de saldo a favor ya presentes: el saldo se suma
+  // una sola vez, abajo. Sin esto, una lista que ya trae 'credit' lo cuenta dos veces.
+  let paid = paymentMethods
+    .filter(p => p.method !== 'credit')
+    .reduce((sum, payment) => sum + payment.amount, 0);
+
+  const creditEnLista = paymentMethods
+    .filter(p => p.method === 'credit')
+    .reduce((sum, payment) => sum + payment.amount, 0);
+
   if (applyCredit && customerCredit > 0) {
-    const creditUsed = calculateCreditUsed(customerCredit, total, paymentMethods);
-    paid += creditUsed;
+    paid += calculateCreditUsed(customerCredit, total, paymentMethods);
+  } else {
+    paid += creditEnLista;
   }
-  
+
   return paid;
+};
+
+/**
+ * Recalcula los totales de una venta despues de devolver parte de sus items.
+ * El recargo que pago el cliente y la comision del datafono bajan en la misma
+ * proporcion que el total, de modo que la venta queda como si se hubiera
+ * hecho por la cantidad final.
+ */
+export const recalcularTrasDevolucion = (
+  original: { total: number; totalCost: number; customerSurcharge?: number; totalCommissions?: number; finalTotal?: number },
+  recalculado: { total: number; totalCost: number }
+): { total: number; totalCost: number; customerSurcharge: number; totalCommissions: number; finalTotal: number; totalProfit: number; profitMargin: number } => {
+  const proporcion = original.total > 0 ? recalculado.total / original.total : 0;
+
+  const customerSurcharge = (original.customerSurcharge || 0) * proporcion;
+  const totalCommissions = (original.totalCommissions || 0) * proporcion;
+  const finalTotal = recalculado.total + customerSurcharge;
+  const totalProfit = finalTotal - recalculado.totalCost - totalCommissions;
+
+  return {
+    total: recalculado.total,
+    totalCost: recalculado.totalCost,
+    customerSurcharge,
+    totalCommissions,
+    finalTotal,
+    totalProfit,
+    profitMargin: recalculado.total > 0 ? (totalProfit / recalculado.total) * 100 : 0,
+  };
 };
