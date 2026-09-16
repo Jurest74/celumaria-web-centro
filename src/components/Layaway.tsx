@@ -690,6 +690,9 @@ export function Layaway() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
+      // El plan nuevo entra a la lista sin releer la colección. Va antes del
+      // pago inicial: si el pago falla, el plan igual existe y debe verse.
+      dispatch(upsertLayaway(newLayaway));
 
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
@@ -700,13 +703,14 @@ export function Layaway() {
         }
 
         try {
-          await processPayment(
+          const resultadoPago = await processPayment(
             newLayaway,
             downPayment,
             allPaymentMethodsCreate,
             creditUsedCreate,
             'Pago inicial'
           );
+          dispatch(upsertLayaway(resultadoPago.updatedLayaway));
         } catch (error) {
           // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
           if (creditoDescontado > 0) {

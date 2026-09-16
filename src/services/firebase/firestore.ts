@@ -1189,7 +1189,11 @@ export const layawaysService = {
     console.log('🛒 Creando plan separe con actualización de inventario...', layaway);
     
     const layawayRef = doc(collection(db, COLLECTIONS.LAYAWAYS));
-    const layawayData = {
+    // removeUndefined: los clientes sin correo o teléfono no traen esos campos,
+    // y la pantalla arma el plan con customerEmail: customer.email. Firestore
+    // rechaza un campo undefined dentro de la transacción, así que el plan no
+    // se podía crear para ningún cliente sin correo.
+    const layawayData = removeUndefined({
       ...layaway,
       payments: layaway.downPayment > 0 ? [{
         id: crypto.randomUUID(),
@@ -1201,7 +1205,7 @@ export const layawaysService = {
       remainingBalance: layaway.totalAmount - layaway.downPayment,
       createdAt: getColombiaTimestamp(),
       updatedAt: getColombiaTimestamp()
-    };
+    });
     
     // El plan separe y la reserva del inventario van en la misma transaccion:
     // si no hay existencias no queda ni el plan ni el descuento.

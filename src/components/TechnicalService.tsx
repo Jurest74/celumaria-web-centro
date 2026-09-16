@@ -1319,6 +1319,9 @@ export function TechnicalService() {
         createdAt: getColombiaTimestamp(),
         updatedAt: getColombiaTimestamp()
       };
+      // El servicio nuevo entra a la lista sin releer la colección. Va antes
+      // del pago inicial: si el pago falla, el servicio igual existe y debe verse.
+      dispatch(upsertTechnicalService(newTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
 
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
@@ -1329,13 +1332,14 @@ export function TechnicalService() {
         }
 
         try {
-          await processPayment(
+          const resultadoPago = await processPayment(
             newTechnicalService,
             downPayment,
             allPaymentMethodsCreate,
             creditUsedCreate,
             'Pago inicial'
           );
+          dispatch(upsertTechnicalService(resultadoPago.updatedTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
         } catch (error) {
           // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
           if (creditoDescontado > 0) {
@@ -1392,8 +1396,6 @@ export function TechnicalService() {
         }`
       );
       dispatch(fetchProducts());
-      // El servicio nuevo entra al store sin releer la colección.
-      dispatch(upsertTechnicalService(newTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
       
       // Mostrar modal de impresión automáticamente después de crear el servicio
       setTimeout(async () => {
