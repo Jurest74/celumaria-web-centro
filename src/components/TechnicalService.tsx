@@ -1151,7 +1151,7 @@ export function TechnicalService() {
         // Agregar saldo a favor si está siendo usado
         if (useCreditCreate && customer && customer.credit > 0) {
           const totalParts = createServiceParts.reduce((sum, item) => sum + (item.partCost * item.quantity), 0);
-          const totalItems = totalParts + (laborCost || 0);
+          const totalItems = Math.max(totalParts, serviceCostValue);
           const availableCredit = Math.min(customer.credit, totalItems - paymentMethodsCreate.reduce((sum, p) => sum + p.amount, 0));
           if (availableCredit > 0) {
             creditUsedCreate = availableCredit;
@@ -1171,7 +1171,7 @@ export function TechnicalService() {
             const itemTotal = item.partCost * item.quantity;
             return sum + itemTotal;
           }, 0);
-          const totalItems = totalParts + (laborCost || 0);
+          const totalItems = Math.max(totalParts, serviceCostValue);
           
           if (manualPayment > 0) {
             // Hay pago manual, usar saldo disponible sin límite del pago manual

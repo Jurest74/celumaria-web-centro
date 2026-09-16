@@ -10,7 +10,7 @@ import { useNotification } from '../contexts/NotificationContext';
 
 export function TechnicianLiquidationComponent() {
   const { user, appUser } = useAuth();
-  const { showNotification } = useNotification();
+  const { showSuccess, showError, showWarning } = useNotification();
   
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [technicians, setTechnicians] = useState<Technician[]>([]);
@@ -233,7 +233,7 @@ export function TechnicianLiquidationComponent() {
 
   const handleCreateLiquidations = async () => {
     if (groupedServicesForLiquidation.length === 0) {
-      showNotification('Selecciona al menos un servicio para liquidar', 'warning');
+      showWarning('Sin servicios seleccionados', 'Selecciona al menos un servicio para liquidar');
       return;
     }
 
@@ -284,7 +284,7 @@ export function TechnicianLiquidationComponent() {
         }
       }
 
-      showNotification('Liquidaciones creadas exitosamente', 'success');
+      showSuccess('Liquidaciones creadas', 'Las liquidaciones se crearon exitosamente');
       
       // Limpiar estados de forma secuencial para evitar problemas de sincronización
       setSelectedServices(new Set());
@@ -292,7 +292,7 @@ export function TechnicianLiquidationComponent() {
       setShowLiquidationModal(false);
     } catch (error) {
       console.error('Error creating liquidations:', error);
-      showNotification('Error al crear las liquidaciones', 'error');
+      showError('Error al crear las liquidaciones', 'No se pudieron crear las liquidaciones. Revisa e inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
