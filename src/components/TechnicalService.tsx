@@ -3,10 +3,10 @@ import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Cl
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectTechnicalServices, selectProducts, selectCustomers } from '../store/selectors';
-import { technicalServicesService, productsService, courtesiesService } from '../services/firebase/firestore';
+import { technicalServicesService, courtesiesService } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, TechnicalServicePayment, PaymentMethod, Technician } from '../types';
-import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
+import { formatCurrency, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { getColombiaTimestamp } from '../utils/dateUtils';
 import { useNotification } from '../contexts/NotificationContext';
@@ -18,7 +18,6 @@ import { fetchTechnicalServices, fetchTechnicalServicesByStatus } from '../store
 import { useFirebase } from '../contexts/FirebaseContext';
 
 // AddProductsToLayawayPOS no se usa más - los repuestos se agregan al crear el servicio
-import { ProductPOSSelector } from './ProductPOSSelector';
 import { CustomerComboBox } from './CustomerComboBox';
 import { CourtesyModal } from './CourtesyModal';
 import { collection, getDocs } from 'firebase/firestore';
@@ -90,72 +89,6 @@ export function TechnicalService() {
   }, []);
 
   // Eliminar producto no recogido y devolver al inventario
-  const handleRemoveUnpickedProduct = async (itemId: string) => {
-    if (!selectedTechnicalService) return;
-    const item = selectedTechnicalService.items.find((i: any) => i.id === itemId);
-    if (!item) return;
-    const unPickedQuantity = item.quantity - (item.pickedUpQuantity || 0);
-    if (unPickedQuantity <= 0) return;
-
-    showConfirm(
-      'Confirmar eliminación de producto',
-      `¿Seguro que quieres eliminar "${item.productName}" (${unPickedQuantity} unidades no recogidas) del servicio técnico? Las unidades serán devueltas al inventario y los totales recalculados.`,
-      async () => {
-        setIsLoading(true);
-        try {
-          // Actualizar inventario usando el servicio correcto
-          await productsService.updateStock(item.productId, unPickedQuantity);
-          // Eliminar el producto del servicio técnico
-          const newItems = selectedTechnicalService.items.filter((i: any) => i.id !== itemId);
-          // Recalcular totales
-          const newTotalCost = newItems.reduce((sum: number, i: any) => sum + i.totalCost, 0);
-          const newTotalAmount = newItems.reduce((sum: number, i: any) => sum + i.totalRevenue, 0);
-          const newExpectedProfit = newTotalAmount - newTotalCost;
-          // Pagos ya realizados
-          const totalPaid = selectedTechnicalService.payments.reduce((sum: number, p: any) => sum + p.amount, 0);
-          const newRemainingBalance = Math.max(0, newTotalAmount - totalPaid);
-          // Recalcular shares si usa el nuevo sistema de costos
-          const svcCostRemove = selectedTechnicalService.serviceCost;
-          const newLaborCostRemove = svcCostRemove !== undefined ? Math.max(0, svcCostRemove - newTotalCost) : undefined;
-          await technicalServicesService.update(selectedTechnicalService.id, {
-            items: newItems,
-            totalAmount: newTotalAmount,
-            totalCost: newTotalCost,
-            expectedProfit: newExpectedProfit,
-            remainingBalance: newRemainingBalance,
-            ...(newLaborCostRemove !== undefined && {
-              laborCost: newLaborCostRemove,
-              technicianShare: newLaborCostRemove * 0.5,
-              businessShare: newLaborCostRemove * 0.5,
-            }),
-            updatedAt: getColombiaTimestamp()
-          });
-          // Actualizar estado local
-          updateTechnicalServiceInState({
-            ...selectedTechnicalService,
-            items: newItems,
-            totalAmount: newTotalAmount,
-            totalCost: newTotalCost,
-            expectedProfit: newExpectedProfit,
-            remainingBalance: newRemainingBalance,
-            ...(newLaborCostRemove !== undefined && {
-              laborCost: newLaborCostRemove,
-              technicianShare: newLaborCostRemove * 0.5,
-              businessShare: newLaborCostRemove * 0.5,
-            }),
-            updatedAt: getColombiaTimestamp()
-          });
-          showSuccess('Producto eliminado', `El producto fue eliminado y las unidades devueltas al inventario.`);
-          dispatch(fetchProducts());
-          dispatch(fetchTechnicalServices());
-        } catch (error) {
-          showError('Error', 'No se pudo eliminar el producto.');
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    );
-  };
 
   // Eliminar servicio técnico
   const handleDeleteTechnicalService = async (layaway: TechnicalServicePlan) => {
@@ -290,7 +223,6 @@ export function TechnicalService() {
   const [availableTechnicians, setAvailableTechnicians] = useState<Technician[]>([]);
   const formRef = useRef<HTMLFormElement>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [showPickupForm, setShowPickupForm] = useState<{ item: TechnicalServiceItem; technicalService: TechnicalServicePlan } | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [useCredit, setUseCredit] = useState(false);
   const [downPaymentDisplay, setDownPaymentDisplay] = useState('');
@@ -1484,134 +1416,6 @@ export function TechnicalService() {
     }
   };
 
-  const handleMarkAsPickedUp = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!showPickupForm) return;
-
-    const { item, technicalService } = showPickupForm;
-    setIsLoading(true);
-    
-    try {
-      const formData = new FormData(e.currentTarget);
-      const quantityToPickUp = parseInt(formData.get('quantity') as string);
-      const notes = formData.get('notes') as string || '';
-
-      const maxCanPickUp = item.quantity - (item.pickedUpQuantity || 0);
-      
-      if (quantityToPickUp <= 0 || quantityToPickUp > maxCanPickUp) {
-        showError('Error de validación', `Solo puedes recoger entre 1 y ${formatNumber(maxCanPickUp)} unidades`);
-        setIsLoading(false);
-        return;
-      }
-
-      // Actualizar en Firebase
-      await technicalServicesService.update(technicalService.id, {
-        items: technicalService.items.map((i: TechnicalServiceItem) => {
-          if (i.id === item.id) {
-            const newPickupRecord = {
-              id: crypto.randomUUID(),
-              quantity: quantityToPickUp,
-              date: getColombiaTimestamp(),
-              notes
-            };
-
-            return {
-              ...i,
-              pickedUpQuantity: (i.pickedUpQuantity || 0) + quantityToPickUp,
-              pickedUpHistory: [...(i.pickedUpHistory || []), newPickupRecord]
-            };
-          }
-          return i;
-        })
-      });
-
-      // Registrar venta real por productos entregados
-      try {
-        const { salesService } = await import('../services/firebase/firestore');
-        
-        // Registrar ganancia real al entregar producto
-        const deliveryRevenue = quantityToPickUp * (item.productSalePrice || 0);
-        const deliveryCost = quantityToPickUp * (item.productPurchasePrice || 0);
-        const deliveryProfit = deliveryRevenue - deliveryCost;
-        const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
-
-        const deliverySaleData = {
-          items: [{
-            productId: item.productId,
-            productName: item.productName,
-            quantity: quantityToPickUp, // Cantidad real entregada
-            purchasePrice: item.productPurchasePrice,
-            salePrice: item.productSalePrice,
-            totalCost: deliveryCost, // ← Costo real del producto entregado
-            totalRevenue: 0, // ← No revenue adicional (ya se contó en abono)
-            profit: deliveryProfit // ← Ganancia real materializada
-          }],
-          subtotal: 0, // ← No revenue adicional
-          discount: 0,
-          tax: 0,
-          total: 0, // ← No dinero adicional (solo ganancia)
-          totalCost: deliveryCost, // ← Costo real
-          totalProfit: deliveryProfit, // ← Ganancia real materializada
-          profitMargin: deliveryMargin, // ← Margen real
-          paymentMethod: 'efectivo' as 'efectivo',
-          paymentMethods: [{ method: 'efectivo' as 'efectivo', amount: 0 }],
-          customerName: technicalService.customerName,
-          customerId: technicalService.customerId,
-          isLayaway: true,
-          layawayId: technicalService.id,
-          type: 'layaway_delivery' as 'layaway_delivery', // Solo para tracking de entregas
-          notes: `✅ Entrega servicio técnico: ${quantityToPickUp} x ${item.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada${notes ? ` - ${notes}` : ''}`
-        };
-
-        await salesService.add(deliverySaleData);
-      } catch (err) {
-        console.error('Error registrando venta de entrega:', err);
-      }
-
-      // Actualizar estado local inmediatamente
-      const updatedItems = technicalService.items.map((i: TechnicalServiceItem) => {
-        if (i.id === item.id) {
-          const newPickupRecord = {
-            id: crypto.randomUUID(),
-            quantity: quantityToPickUp,
-            date: getColombiaTimestamp(),
-            notes
-          };
-
-          return {
-            ...i,
-            pickedUpQuantity: (i.pickedUpQuantity || 0) + quantityToPickUp,
-            pickedUpHistory: [...(i.pickedUpHistory || []), newPickupRecord]
-          };
-        }
-        return i;
-      });
-
-      const updatedTechnicalService: TechnicalServicePlan = {
-        ...technicalService,
-        items: updatedItems,
-        updatedAt: getColombiaTimestamp()
-      };
-
-      updateTechnicalServiceInState(updatedTechnicalService);
-      
-      setShowPickupForm(null);
-      
-      showSuccess(
-        'Productos recogidos',
-        `Se marcaron ${quantityToPickUp} unidades de "${item.productName}" como recogidas`
-      );
-
-      // Forzar actualización desde Firebase
-      setTimeout(() => forceRefreshTechnicalService(technicalService.id), 1000);
-
-    } catch (error) {
-      console.error('Error marking as picked up:', error);
-      showError('Error al marcar como recogido', 'No se pudo actualizar el estado. Inténtalo de nuevo.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleCancelPayment = async (paymentId: string) => {
     if (!selectedTechnicalService) return;
@@ -3282,7 +3086,7 @@ export function TechnicalService() {
       </div>
         
       {/* Layaway Details Modal */}
-        {selectedTechnicalService && !showPaymentForm && !showPickupForm && !showAddParts && (
+        {selectedTechnicalService && !showPaymentForm && !showAddParts && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
@@ -4685,82 +4489,6 @@ export function TechnicalService() {
       )}
 
       {/* Pickup Form Modal */}
-      {showPickupForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Marcar como Recogido</h3>
-                <button
-                  onClick={() => setShowPickupForm(null)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <X className="h-6 w-6" />
-                </button>
-              </div>
-              
-              <div className="mb-4 p-3 bg-blue-50 rounded-lg">
-                <div className="font-medium">{showPickupForm.item.productName}</div>
-                <div className="text-sm text-gray-600">
-                  Disponible para recoger: {showPickupForm.item.quantity - (showPickupForm.item.pickedUpQuantity || 0)} de {showPickupForm.item.quantity}
-                </div>
-              </div>
-              
-              <form onSubmit={handleMarkAsPickedUp} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Cantidad a Recoger *
-                  </label>
-                  <input
-                    type="number"
-                    name="quantity"
-                    min="1"
-                    max={showPickupForm.item.quantity - (showPickupForm.item.pickedUpQuantity || 0)}
-                    defaultValue="1"
-                    required
-                    disabled={isLoading}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Notas (Opcional)
-                  </label>
-                  <textarea
-                    name="notes"
-                    rows={3}
-                    disabled={isLoading}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                    placeholder="Notas sobre la recogida..."
-                  />
-                </div>
-                
-                <div className="flex justify-end space-x-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowPickupForm(null)}
-                    disabled={isLoading}
-                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-                  >
-                    {isLoading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>}
-                    <span>
-                      {isLoading ? 'Marcando...' : 'Marcar como Recogido'}
-                    </span>
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
 
           {/* Empty State */}
           {filteredTechnicalServices.length === 0 && (
