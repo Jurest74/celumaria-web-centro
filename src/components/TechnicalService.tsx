@@ -1365,7 +1365,12 @@ export function TechnicalService() {
       }, 500);
     } catch (error) {
       console.error('Error creating technical service:', error);
-      showError('Error al crear servicio técnico', 'No se pudo crear el servicio técnico. Inténtalo de nuevo.');
+      // El mensaje del error viaja tal cual: si falto inventario dice que
+      // repuesto y cuanto hay.
+      showError(
+        'Error al crear servicio técnico',
+        error instanceof Error ? error.message : 'No se pudo crear el servicio técnico. Inténtalo de nuevo.'
+      );
     } finally {
       setIsLoading(false);
     }

@@ -13,6 +13,7 @@ import {
   limit,
   onSnapshot,
   writeBatch,
+  runTransaction,
   increment,
   serverTimestamp,
   waitForPendingWrites
@@ -30,6 +31,7 @@ import type {
   Purchase
 } from '../../types';
 import { getColombiaTimestamp, bogotaDateKey } from '../../utils/dateUtils';
+import { agruparPedidos, faltantesDeStock, StockInsuficienteError, type Pedido } from '../../utils/stock';
 
 // Espera confirmación del servidor con timeout de 15 segundos
 function waitForServerConfirmation(): Promise<void> {
@@ -446,6 +448,48 @@ export const productsService = {
 };
 
 // Sales Service
+/**
+ * Descuenta existencias verificandolas contra el dato fresco, dentro de una
+ * transaccion. Firestore reintenta la transaccion si otro proceso toco los
+ * mismos productos entre la lectura y la escritura, asi que dos cajas
+ * vendiendo la ultima unidad no pueden pasar las dos.
+ *
+ * `escribirDocumento` recibe la transaccion para guardar el documento que
+ * motiva la reserva (la venta, el plan separe, el servicio tecnico) en el
+ * mismo commit: o quedan el documento y el descuento, o no queda ninguno.
+ *
+ * Lanza StockInsuficienteError con el detalle de lo que falto.
+ */
+async function reservarExistencias(
+  pedidos: Pedido[],
+  escribirDocumento?: (tx: Parameters<Parameters<typeof runTransaction>[1]>[0]) => void
+): Promise<void> {
+  const porProducto = agruparPedidos(pedidos);
+
+  await runTransaction(db, async (tx) => {
+    // Firestore exige que todas las lecturas ocurran antes de cualquier escritura.
+    const existencias = new Map<string, number | null>();
+    for (const productId of porProducto.keys()) {
+      const snap = await tx.get(doc(db, COLLECTIONS.PRODUCTS, productId));
+      existencias.set(productId, snap.exists() ? ((snap.data() as any).stock ?? 0) : null);
+    }
+
+    const faltantes = faltantesDeStock(porProducto, existencias);
+    if (faltantes.length > 0) {
+      throw new StockInsuficienteError(faltantes);
+    }
+
+    escribirDocumento?.(tx);
+
+    for (const [productId, { total }] of porProducto) {
+      tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+        stock: increment(-total),
+        updatedAt: getColombiaTimestamp()
+      });
+    }
+  });
+}
+
 export const salesService = {
   async getAll(): Promise<Sale[]> {
     const querySnapshot = await getDocs(
@@ -463,15 +507,11 @@ export const salesService = {
   },
 
   async add(sale: Omit<Sale, 'id' | 'createdAt'>): Promise<string> {
-    const batch = writeBatch(db);
-
-    // Add sale - limpiar undefined antes de guardar
     const saleRef = doc(collection(db, COLLECTIONS.SALES));
     const cleanedSale = removeUndefined({
       ...sale,
       createdAt: getColombiaTimestamp()
     });
-    batch.set(saleRef, cleanedSale);
 
     // El stock SOLO se descuenta para ventas regulares.
     // Las ventas de tipo:
@@ -482,32 +522,30 @@ export const salesService = {
     // Estos registros existen únicamente como histórico contable.
     const affectsStock = !sale.type || sale.type === 'regular';
 
-    if (affectsStock) {
-      // Update product stocks for regular items
-      for (const item of sale.items) {
-        if (!item.productId) continue;
-        const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-        batch.update(productRef, {
-          stock: increment(-item.quantity),
-          updatedAt: getColombiaTimestamp()
-        });
-      }
-
-      // Update product stocks for courtesy items if they exist
-      if (sale.courtesyItems && Array.isArray(sale.courtesyItems)) {
-        for (const courtesyItem of sale.courtesyItems) {
-          if (courtesyItem.productId) {
-            const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
-            batch.update(productRef, {
-              stock: increment(-courtesyItem.quantity),
-              updatedAt: getColombiaTimestamp()
-            });
-          }
-        }
-      }
+    if (!affectsStock) {
+      await setDoc(saleRef, cleanedSale);
+      await waitForServerConfirmation();
+      return saleRef.id;
     }
 
-    await batch.commit();
+    // Las cortesías salen del mismo inventario que lo vendido, así que entran
+    // en la misma verificación: un producto puede ir en una línea de venta y
+    // además como cortesía, y por separado ninguna de las dos alcanzaría a
+    // detectar que juntas no caben.
+    const pedidos: Pedido[] = [
+      ...sale.items.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        productName: (item as any).productName
+      })),
+      ...((sale.courtesyItems || []) as any[]).map(c => ({
+        productId: c.productId,
+        quantity: c.quantity,
+        productName: c.productName
+      }))
+    ];
+
+    await reservarExistencias(pedidos, (tx) => tx.set(saleRef, cleanedSale));
     await waitForServerConfirmation();
     return saleRef.id;
   },
@@ -774,9 +812,6 @@ export const layawaysService = {
   async add(layaway: Omit<LayawayPlan, 'id' | 'createdAt' | 'updatedAt' | 'payments' | 'remainingBalance'>): Promise<string> {
     console.log('🛒 Creando plan separe con actualización de inventario...', layaway);
     
-    const batch = writeBatch(db);
-    
-    // Add layaway
     const layawayRef = doc(collection(db, COLLECTIONS.LAYAWAYS));
     const layawayData = {
       ...layaway,
@@ -792,20 +827,17 @@ export const layawaysService = {
       updatedAt: getColombiaTimestamp()
     };
     
-    batch.set(layawayRef, layawayData);
-
-    // Update product stocks (reserve items)
-    console.log('📦 Actualizando inventario para reservar productos...');
-    for (const item of layaway.items) {
-      console.log(`📦 Reservando ${item.quantity} unidades de ${item.productName} (ID: ${item.productId})`);
-      const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-      batch.update(productRef, {
-        stock: increment(-item.quantity),
-        updatedAt: getColombiaTimestamp()
-      });
-    }
-
-    await batch.commit();
+    // El plan separe y la reserva del inventario van en la misma transaccion:
+    // si no hay existencias no queda ni el plan ni el descuento.
+    console.log('📦 Reservando inventario para el plan separe...');
+    await reservarExistencias(
+      layaway.items.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        productName: item.productName
+      })),
+      (tx) => tx.set(layawayRef, layawayData)
+    );
     await waitForServerConfirmation();
     console.log('✅ Plan separe creado e inventario actualizado exitosamente');
     return layawayRef.id;
@@ -855,17 +887,16 @@ export const layawaysService = {
       updatedAt: getColombiaTimestamp()
     });
     
-    // Update product stocks for new items
-    console.log('📦 Actualizando inventario para nuevos productos...');
-    for (const item of newItems) {
-      console.log(`📦 Reservando ${item.quantity} unidades de ${item.productName} (ID: ${item.productId})`);
-      const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-      batch.update(productRef, {
-        stock: increment(-item.quantity),
-        updatedAt: getColombiaTimestamp()
-      });
-    }
-    
+    // Se verifican existencias antes de sumar los productos al plan.
+    console.log('📦 Reservando inventario para los productos nuevos...');
+    await reservarExistencias(
+      newItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        productName: item.productName
+      }))
+    );
+
     await batch.commit();
     await waitForServerConfirmation();
     console.log('✅ Productos agregados al plan separe e inventario actualizado exitosamente');
@@ -1056,8 +1087,6 @@ export const technicalServicesService = {
     console.log('📝 Creando nuevo servicio técnico...');
     
     try {
-      const batch = writeBatch(db);
-      
       const technicalServiceRef = doc(collection(db, COLLECTIONS.TECHNICAL_SERVICES));
       
       const technicalService = {
@@ -1068,34 +1097,28 @@ export const technicalServicesService = {
 
       // Limpiar undefined antes de guardar
       const cleanedService = removeUndefined(cleanTimestamps(technicalService));
-      batch.set(technicalServiceRef, cleanedService);
-      
-      // Only update inventory for items that have productId (inventory items)
-      // Skip custom parts that don't have productId
-      for (const item of technicalServiceData.items) {
-        if (item.productId) {
-          const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-          batch.update(productRef, {
-            stock: increment(-item.quantity),
-            updatedAt: getColombiaTimestamp(),
-          });
-        }
-      }
 
-      // Update product stocks for courtesy items if they exist
-      if (technicalServiceData.courtesyItems && Array.isArray(technicalServiceData.courtesyItems)) {
-        for (const courtesyItem of technicalServiceData.courtesyItems) {
-          if (courtesyItem.productId) {
-            const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
-            batch.update(productRef, {
-              stock: increment(-courtesyItem.quantity),
-              updatedAt: getColombiaTimestamp(),
-            });
-          }
-        }
-      }
+      // Los repuestos sin productId son partes externas que no salen del
+      // inventario, asi que no entran en la reserva. Las cortesias si.
+      const pedidos: Pedido[] = [
+        ...(technicalServiceData.items as any[])
+          .filter(item => item.productId)
+          .map(item => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            productName: item.productName || item.partName
+          })),
+        ...(((technicalServiceData.courtesyItems || []) as any[])
+          .filter(c => c.productId)
+          .map(c => ({
+            productId: c.productId,
+            quantity: c.quantity,
+            productName: c.productName
+          })))
+      ];
 
-      await batch.commit();
+      // El servicio y la reserva de sus repuestos, en un solo commit.
+      await reservarExistencias(pedidos, (tx) => tx.set(technicalServiceRef, cleanedService));
       await waitForServerConfirmation();
       console.log('✅ Servicio técnico creado con ID:', technicalServiceRef.id);
       return technicalServiceRef.id;

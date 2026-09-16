@@ -726,7 +726,13 @@ export function Layaway() {
       dispatch(fetchLayaways());
     } catch (error) {
       console.error('Error creating layaway:', error);
-      showError('Error al crear plan separe', 'No se pudo crear el plan separe. Inténtalo de nuevo.');
+      // El mensaje del error viaja tal cual: si falto inventario dice que
+      // producto y cuanto hay. Un "intentalo de nuevo" generico hace que el
+      // usuario reintente algo que volvera a fallar igual.
+      showError(
+        'Error al crear plan separe',
+        error instanceof Error ? error.message : 'No se pudo crear el plan separe. Inténtalo de nuevo.'
+      );
     } finally {
       setIsLoading(false);
     }
