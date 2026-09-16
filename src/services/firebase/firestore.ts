@@ -1157,6 +1157,18 @@ export const layawaysService = {
     }
   },
 
+  // Un solo plan separe. Refrescar uno cuesta una lectura, no toda la coleccion.
+  async getById(id: string): Promise<LayawayPlan | null> {
+    const snap = await getDoc(doc(db, COLLECTIONS.LAYAWAYS, id));
+    if (!snap.exists()) return null;
+    return {
+      id: snap.id,
+      ...snap.data(),
+      createdAt: convertTimestamp(snap.data().createdAt),
+      updatedAt: convertTimestamp(snap.data().updatedAt)
+    } as LayawayPlan;
+  },
+
   // Obtener solo activos (filtrado en el cliente)
   async getActiveLayaways(): Promise<LayawayPlan[]> {
     console.log('🔍 Obteniendo planes separe activos...');

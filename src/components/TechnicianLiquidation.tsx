@@ -6,7 +6,7 @@ import { COLLECTIONS } from '../services/firebase/collections';
 import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
-import { bogotaDateKey, subtractDaysBogota } from '../utils/dateUtils';
+import { bogotaDateKey, subtractDaysBogota, startOfDayBogota, endOfDayBogota } from '../utils/dateUtils';
 import { montosLiquidacion } from '../utils/liquidacion';
 
 export function TechnicianLiquidationComponent() {
@@ -51,18 +51,27 @@ export function TechnicianLiquidationComponent() {
     return () => unsubscribe();
   }, []);
 
-  // Cargar servicios técnicos completados
+  // Rango de la pantalla, en día calendario Colombia. Si se borran las fechas
+  // se usan los últimos 30 días, para no quedar sin límite.
+  const rangoDesdeISO = startOfDayBogota(dateFromFilter || subtractDaysBogota(30));
+  const rangoHastaISO = endOfDayBogota(dateToFilter || bogotaDateKey());
+
+  // Cargar servicios técnicos completados del rango
   useEffect(() => {
-    // Consulta simplificada sin orderBy para evitar índice compuesto
+    // Antes se escuchaban TODOS los servicios completados, sin límite de fecha:
+    // una lectura por servicio del histórico cada vez que se abría la pantalla.
+    // El rango usa un solo campo, así que no exige índice compuesto; el estado
+    // se filtra en memoria.
     const q = query(
       collection(db, COLLECTIONS.TECHNICAL_SERVICES),
-      where('status', '==', 'completed')
+      where('completedAt', '>=', rangoDesdeISO),
+      where('completedAt', '<=', rangoHastaISO)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      let servicesData = snapshot.docs.map(doc => ({
+      let servicesData = (snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      })) as TechnicalService[];
+      })) as TechnicalService[]).filter(s => s.status === 'completed');
       
       // Ordenar en memoria por completedAt desc
       servicesData.sort((a, b) => {
@@ -83,11 +92,17 @@ export function TechnicianLiquidationComponent() {
       );
     });
     return () => unsubscribe();
-  }, []);
+  }, [rangoDesdeISO, rangoHastaISO]);
 
-  // Cargar liquidaciones
+  // Cargar liquidaciones del rango
   useEffect(() => {
-    const q = query(collection(db, COLLECTIONS.TECHNICIAN_LIQUIDATIONS), orderBy('createdAt', 'desc'));
+    // Mismo motivo que arriba: antes se traían todas las liquidaciones.
+    const q = query(
+      collection(db, COLLECTIONS.TECHNICIAN_LIQUIDATIONS),
+      where('createdAt', '>=', rangoDesdeISO),
+      where('createdAt', '<=', rangoHastaISO),
+      orderBy('createdAt', 'desc')
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const liquidationsData = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -105,7 +120,7 @@ export function TechnicianLiquidationComponent() {
       );
     });
     return () => unsubscribe();
-  }, []);
+  }, [rangoDesdeISO, rangoHastaISO]);
 
   // Servicios pendientes de liquidar (completados pero sin liquidar)
   const pendingServices = useMemo(() => {

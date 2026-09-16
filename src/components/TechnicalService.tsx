@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 import { fetchProducts } from '../store/thunks/productsThunks';
 import { fetchTechnicalServices, fetchTechnicalServicesByStatus } from '../store/thunks/technicalServicesThunks';
+import { upsertTechnicalService } from '../store/slices/firebaseSlice';
 // ⚡ OPTIMIZADO: No usar useSectionRealtime - datos se cargan al navegar
 
 // AddProductsToLayawayPOS no se usa más - los repuestos se agregan al crear el servicio
@@ -250,10 +251,14 @@ export function TechnicalService() {
     }
   }, [allTechnicalServices, selectedTechnicalService?.id]);
   
+  // Actualiza el servicio en la pantalla y en el store. Antes la lista solo se
+  // refrescaba volviendo a descargar todos los servicios técnicos, que con el
+  // histórico acumulado son cientos de lecturas por cada acción.
   const updateTechnicalServiceInState = (updatedTechnicalService: TechnicalServicePlan) => {
     if (selectedTechnicalService && selectedTechnicalService.id === updatedTechnicalService.id) {
       setSelectedTechnicalService(updatedTechnicalService);
     }
+    dispatch(upsertTechnicalService(updatedTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
   };
 
   // Initialize editing data when modal opens
@@ -374,7 +379,6 @@ export function TechnicalService() {
       
       // Close modal and refresh data
       setSelectedTechnicalService(null);
-      dispatch(fetchTechnicalServices());
     } catch (error) {
       console.error('Error completing service:', error);
       showError('Error', 'No se pudo finalizar el servicio técnico');
@@ -627,8 +631,6 @@ export function TechnicalService() {
         `Se eliminó "${partName}" por ${formatCurrency(removedAmount)}`
       );
       
-      dispatch(fetchTechnicalServices());
-      
       // Close modal and reset state
       setShowDeleteConfirm(false);
       setPartToDelete(null);
@@ -686,6 +688,7 @@ export function TechnicalService() {
         newStatus === 'en_tienda' ? 'En tienda' :
         'Instalado'
       }`);
+
     } catch (error) {
       console.error('Error updating item status:', error);
       showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo actualizar el estado del repuesto');
@@ -786,8 +789,7 @@ export function TechnicalService() {
       // Update local state
       updateTechnicalServiceInState(updatedService);
       
-      // Force refresh
-      dispatch(fetchTechnicalServices());
+
       
       setIsEditingDetails(false);
       showSuccess('Información actualizada', 'Los datos del servicio técnico han sido actualizados correctamente.');
@@ -848,12 +850,13 @@ export function TechnicalService() {
       }
     });
   }, [allTechnicalServices, statusFilter, salesPersonFilter, searchTerm, sortBy, dateFrom, dateTo]);
+  // Relee solo este servicio (una lectura). Antes descargaba la colección
+  // completa y se quedaba con uno.
   const forceRefreshTechnicalService = async (technicalServiceId: string) => {
     try {
-      const allTechnicalServicesFromFirebase = await technicalServicesService.getAll();
-      const updatedTechnicalService = allTechnicalServicesFromFirebase.find(ts => ts.id === technicalServiceId);
+      const updatedTechnicalService = await technicalServicesService.getById(technicalServiceId);
       if (updatedTechnicalService) {
-        updateTechnicalServiceInState(updatedTechnicalService);
+        updateTechnicalServiceInState(updatedTechnicalService as unknown as TechnicalServicePlan);
       }
     } catch (error) {}
   };
@@ -1309,9 +1312,6 @@ export function TechnicalService() {
       const newTechnicalServiceId = await technicalServicesService.add(technicalServiceData);
       console.log('Technical service created with ID:', newTechnicalServiceId);
       
-      // Force refresh of technical services data
-      await dispatch(fetchTechnicalServices());
-
       // Obtener el servicio técnico recién creado para procesarle el pago inicial
       const newTechnicalService: TechnicalServicePlan = {
         id: newTechnicalServiceId,
@@ -1392,7 +1392,8 @@ export function TechnicalService() {
         }`
       );
       dispatch(fetchProducts());
-      dispatch(fetchTechnicalServices());
+      // El servicio nuevo entra al store sin releer la colección.
+      dispatch(upsertTechnicalService(newTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
       
       // Mostrar modal de impresión automáticamente después de crear el servicio
       setTimeout(async () => {
@@ -1525,7 +1526,6 @@ export function TechnicalService() {
         }`
       );
       setTimeout(() => forceRefreshTechnicalService(selectedTechnicalService.id), 1000);
-      dispatch(fetchTechnicalServices());
     } catch (error) {
       console.error('Error adding payment:', error);
       // El mensaje viaja tal cual: si el saldo cambio desde otro equipo o no
@@ -1640,7 +1640,6 @@ export function TechnicalService() {
           );
           // Forzar actualización desde Firebase
           setTimeout(() => forceRefreshTechnicalService(selectedTechnicalService.id), 1000);
-          dispatch(fetchTechnicalServices());
         } catch (error) {
           console.error('Error cancelling payment:', error);
           showError('Error al cancelar pago', error instanceof Error && error.message ? error.message : 'No se pudo cancelar el pago. Inténtalo de nuevo.');
@@ -1736,7 +1735,8 @@ export function TechnicalService() {
       }
 
       showSuccess('Servicio técnico cancelado', successMessage);
-      dispatch(fetchTechnicalServices());
+      // Solo este servicio, no la colección completa.
+      forceRefreshTechnicalService(service.id);
       setShowCancellationModal(null);
     } catch (error) {
       console.error('Error cancelling technical service:', error);
@@ -4199,7 +4199,6 @@ export function TechnicalService() {
                     `Se agregó "${partName}" por ${formatCurrency(newPart.totalCost)}`
                   );
                   
-                  dispatch(fetchTechnicalServices());
                 } catch (error) {
                   showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo agregar el repuesto. Inténtalo de nuevo.');
                 } finally {

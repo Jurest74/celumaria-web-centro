@@ -3,7 +3,7 @@ import { Gift, Package, DollarSign, Search, Filter, TrendingDown } from 'lucide-
 import { courtesiesService } from '../services/firebase/firestore';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
-import { bogotaDateKey } from '../utils/dateUtils';
+import { bogotaDateKey, startOfDayBogota, endOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 
 export function Courtesies() {
   const { permissionHelpers } = useAuth();
@@ -12,8 +12,10 @@ export function Courtesies() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSalesperson, setFilterSalesperson] = useState('all');
   const [filterProduct, setFilterProduct] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // Por defecto, el último mes. Antes se descargaba la colección completa de
+  // cortesías al abrir la pantalla y la fecha se filtraba en el navegador.
+  const [startDate, setStartDate] = useState(subtractDaysBogota(30));
+  const [endDate, setEndDate] = useState(bogotaDateKey());
 
   // Verificar permisos
   if (!permissionHelpers?.hasPermission('courtesies')) {
@@ -28,22 +30,29 @@ export function Courtesies() {
     );
   }
 
-  // Cargar cortesías
+  // Cargar cortesías del rango elegido
   useEffect(() => {
-    loadCourtesies();
-  }, []);
+    const loadCourtesies = async () => {
+      try {
+        setLoading(true);
+        // Solo el rango pedido: la consulta usa un único campo (createdAt), así
+        // que no necesita índice compuesto.
+        const data = startDate || endDate
+          ? await courtesiesService.getByDateRange(
+              startOfDayBogota(startDate || '2000-01-01'),
+              endOfDayBogota(endDate || bogotaDateKey())
+            )
+          : await courtesiesService.getAll();
+        setCourtesies(data);
+      } catch (error) {
+        console.error('Error loading courtesies:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const loadCourtesies = async () => {
-    try {
-      setLoading(true);
-      const data = await courtesiesService.getAll();
-      setCourtesies(data);
-    } catch (error) {
-      console.error('Error loading courtesies:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    loadCourtesies();
+  }, [startDate, endDate]);
 
   // Obtener vendedores únicos
   const salespeople = useMemo(() => {
@@ -99,14 +108,15 @@ export function Courtesies() {
     return { totalCourtesies, totalValue, totalCost, totalQuantity };
   }, [filteredCourtesies]);
 
-  const hasActiveFilters = searchQuery || filterSalesperson !== 'all' || filterProduct !== 'all' || startDate || endDate;
+  const hasActiveFilters = !!searchQuery || filterSalesperson !== 'all' || filterProduct !== 'all'
+    || startDate !== subtractDaysBogota(30) || endDate !== bogotaDateKey();
 
   const clearFilters = () => {
     setSearchQuery('');
     setFilterSalesperson('all');
     setFilterProduct('all');
-    setStartDate('');
-    setEndDate('');
+    setStartDate(subtractDaysBogota(30));
+    setEndDate(bogotaDateKey());
   };
 
   if (loading) {

@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 import { fetchProducts } from '../store/thunks/productsThunks';
 import { fetchLayaways } from '../store/thunks/layawaysThunks';
+import { upsertLayaway } from '../store/slices/firebaseSlice';
 // ⚡ OPTIMIZADO: No usar useSectionRealtime - datos se cargan al navegar
 
 import { AddProductsToLayawayPOS } from './AddProductsToLayawayPOS';
@@ -131,7 +132,6 @@ export function Layaway() {
           updateLayawayInState(updatedLayaway);
           showSuccess('Producto eliminado', `El producto fue eliminado y las unidades devueltas al inventario.`);
           dispatch(fetchProducts());
-          dispatch(fetchLayaways());
         } catch (error) {
           showError('Error', error instanceof Error && error.message ? error.message : 'No se pudo eliminar el producto.');
         } finally {
@@ -245,10 +245,13 @@ export function Layaway() {
     }
   }, [allLayaways, selectedLayaway?.id]);
   
+  // Actualiza el plan en la pantalla y en el store. Antes la lista solo se
+  // refrescaba volviendo a descargar todos los planes separe.
   const updateLayawayInState = (updatedLayaway: LayawayPlan) => {
     if (selectedLayaway && selectedLayaway.id === updatedLayaway.id) {
       setSelectedLayaway(updatedLayaway);
     }
+    dispatch(upsertLayaway(updatedLayaway));
   };
   
   // Layaways filtrados por estado, vendedor y búsqueda
@@ -268,10 +271,11 @@ export function Layaway() {
       return inCustomer || inProducts;
     });
   }, [allLayaways, statusFilter, salesPersonFilter, searchTerm]);
+  // Relee solo este plan (una lectura). Antes descargaba la coleccion completa
+  // y se quedaba con uno.
   const forceRefreshLayaway = async (layawayId: string) => {
     try {
-      const allLayawaysFromFirebase = await layawaysService.getAll();
-      const updatedLayaway = allLayawaysFromFirebase.find(l => l.id === layawayId);
+      const updatedLayaway = await layawaysService.getById(layawayId);
       if (updatedLayaway) {
         updateLayawayInState(updatedLayaway);
       }
@@ -722,7 +726,6 @@ export function Layaway() {
         }`
       );
       dispatch(fetchProducts());
-      dispatch(fetchLayaways());
     } catch (error) {
       console.error('Error creating layaway:', error);
       // El mensaje del error viaja tal cual: si falto inventario dice que
@@ -844,7 +847,6 @@ export function Layaway() {
         }`
       );
       setTimeout(() => forceRefreshLayaway(selectedLayaway.id), 1000);
-      dispatch(fetchLayaways());
     } catch (error) {
       console.error('Error adding payment:', error);
       // El mensaje viaja tal cual: si el saldo cambio desde otro equipo o no
@@ -1103,7 +1105,6 @@ export function Layaway() {
           );
           // Forzar actualización desde Firebase
           setTimeout(() => forceRefreshLayaway(selectedLayaway.id), 1000);
-          dispatch(fetchLayaways());
         } catch (error) {
           console.error('Error cancelling payment:', error);
           showError('Error al cancelar pago', error instanceof Error && error.message ? error.message : 'No se pudo cancelar el pago. Inténtalo de nuevo.');
@@ -1206,7 +1207,6 @@ export function Layaway() {
 
           // Forzar actualización desde Firebase
           setTimeout(() => forceRefreshLayaway(selectedLayaway.id), 1000);
-          dispatch(fetchLayaways());
 
         } catch (error) {
           console.error('Error reverting pickup:', error);
@@ -1312,7 +1312,6 @@ export function Layaway() {
 
           // Actualizar el inventario y layaways
           dispatch(fetchProducts());
-          dispatch(fetchLayaways());
           // Refrescar clientes para actualizar saldo a favor inmediatamente
           const { fetchCustomers } = await import('../store/thunks/customersThunks');
           dispatch(fetchCustomers());
@@ -2623,7 +2622,6 @@ export function Layaway() {
                       `Se agregaron ${newItems.length} producto(s) al plan separe por ${formatCurrency(additionalAmount)}`
                     );
                     dispatch(fetchProducts());
-                    dispatch(fetchLayaways());
                     setTimeout(() => forceRefreshLayaway(selectedLayaway.id), 1000);
                   } catch (error) {
                     showError('Error al agregar productos', 'No se pudieron agregar los productos. Inténtalo de nuevo.');

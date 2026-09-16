@@ -150,6 +150,17 @@ const firebaseSlice = createSlice({
       state.layaways.loading = false;
       state.layaways.error = null;
     },
+    // Actualiza (o agrega) un solo plan separe. Antes, despues de cada abono o
+    // recogida, se volvia a descargar la coleccion completa solo para refrescar
+    // la lista: una lectura por plan, en cada accion.
+    upsertLayaway: (state, action: PayloadAction<LayawayPlan>) => {
+      const i = state.layaways.items.findIndex(l => l.id === action.payload.id);
+      if (i >= 0) state.layaways.items[i] = action.payload;
+      else state.layaways.items.unshift(action.payload);
+    },
+    removeLayaway: (state, action: PayloadAction<string>) => {
+      state.layaways.items = state.layaways.items.filter(l => l.id !== action.payload);
+    },
     setLayawaysLoading: (state, action: PayloadAction<boolean>) => {
       state.layaways.loading = action.payload;
     },
@@ -163,6 +174,16 @@ const firebaseSlice = createSlice({
       state.technicalServices.items = action.payload;
       state.technicalServices.loading = false;
       state.technicalServices.error = null;
+    },
+    // Igual que upsertLayaway: evita recargar todos los servicios tecnicos
+    // despues de cada pago, cambio de estado o repuesto.
+    upsertTechnicalService: (state, action: PayloadAction<TechnicalService>) => {
+      const i = state.technicalServices.items.findIndex(t => t.id === action.payload.id);
+      if (i >= 0) state.technicalServices.items[i] = action.payload;
+      else state.technicalServices.items.unshift(action.payload);
+    },
+    removeTechnicalService: (state, action: PayloadAction<string>) => {
+      state.technicalServices.items = state.technicalServices.items.filter(t => t.id !== action.payload);
     },
     setTechnicalServicesLoading: (state, action: PayloadAction<boolean>) => {
       state.technicalServices.loading = action.payload;
@@ -206,9 +227,13 @@ export const {
   setCustomersLoading,
   setCustomersError,
   setLayaways,
+  upsertLayaway,
+  removeLayaway,
   setLayawaysLoading,
   setLayawaysError,
   setTechnicalServices,
+  upsertTechnicalService,
+  removeTechnicalService,
   setTechnicalServicesLoading,
   setTechnicalServicesError,
   setStats,

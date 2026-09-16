@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   Calendar,
@@ -17,10 +17,12 @@ import {
   Gift
 } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { selectTechnicalServices, selectCustomers } from '../store/selectors';
+import { selectCustomers } from '../store/selectors';
 import { TechnicalService } from '../types';
 import { formatCurrency } from '../utils/currency';
-import { useSectionRealtime } from '../hooks/useOnDemandData';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { COLLECTIONS } from '../services/firebase/collections';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
 
 const BOGOTA_OFFSET = '-05:00';
@@ -82,7 +84,6 @@ function getValidDate(date: any): Date | null {
 // Interpreta 'YYYY-MM-DD' como mediodía día calendario Colombia (instante UTC absoluto)
 
 export function TechnicalServiceHistory() {
-  useSectionRealtime('technicalServices');
   
   // Estados para pestañas y filtros
   const [activeTab, setActiveTab] = useState<'services' | 'cashflow'>('services');
@@ -93,6 +94,42 @@ export function TechnicalServiceHistory() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'date' | 'total' | 'profit'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Carga de los servicios del período (ver nota en serviciosDelRango).
+  useEffect(() => {
+    const rango = bogotaRangeISO(dateFilter, customDateRange);
+    if (!rango) {
+      setServiciosDelRango([]);
+      setCargandoServicios(false);
+      return;
+    }
+
+    let vigente = true;
+    const cargar = async () => {
+      setCargandoServicios(true);
+      try {
+        const coleccion = collection(db, COLLECTIONS.TECHNICAL_SERVICES);
+        const [creados, movidos] = await Promise.all([
+          getDocs(query(coleccion, where('createdAt', '>=', rango.startISO), where('createdAt', '<=', rango.endISO))),
+          getDocs(query(coleccion, where('updatedAt', '>=', rango.startISO), where('updatedAt', '<=', rango.endISO))),
+        ]);
+
+        const porId = new Map<string, TechnicalService>();
+        for (const docSnap of [...creados.docs, ...movidos.docs]) {
+          porId.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as TechnicalService);
+        }
+        if (vigente) setServiciosDelRango(Array.from(porId.values()));
+      } catch (error) {
+        console.error('Error cargando servicios técnicos del período:', error);
+        if (vigente) setServiciosDelRango([]);
+      } finally {
+        if (vigente) setCargandoServicios(false);
+      }
+    };
+
+    cargar();
+    return () => { vigente = false; };
+  }, [dateFilter, customDateRange]);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedService, setSelectedService] = useState<TechnicalService | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -121,8 +158,17 @@ export function TechnicalServiceHistory() {
   
   const itemsPerPage = 10;
 
-  // Selectors
-  const allTechnicalServices = useAppSelector(selectTechnicalServices);
+  // Servicios del rango elegido.
+  //
+  // Antes esta pantalla se suscribía a TODA la colección de servicios
+  // técnicos: con el histórico acumulado, una lectura por servicio cada vez
+  // que se abría. Ahora se piden dos rangos sobre un solo campo (sin índice
+  // compuesto): los creados en el período y los movidos en el período
+  // (updatedAt), que es lo que cubre los pagos y los cierres de servicios
+  // viejos, necesarios para la pestaña de flujo de caja.
+  const [serviciosDelRango, setServiciosDelRango] = useState<TechnicalService[]>([]);
+  const [cargandoServicios, setCargandoServicios] = useState(true);
+  const allTechnicalServices = serviciosDelRango;
   const customers = useAppSelector(selectCustomers);
 
   // Función para calcular totales reales basados en items actuales
@@ -1012,8 +1058,15 @@ export function TechnicalServiceHistory() {
                 )}
               </div>
 
+              {/* Cargando */}
+              {cargandoServicios && paginatedServices.length === 0 && (
+                <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-gray-300">
+                  <p className="text-gray-500">Cargando servicios del período...</p>
+                </div>
+              )}
+
               {/* Estado vacío */}
-              {paginatedServices.length === 0 && (
+              {!cargandoServicios && paginatedServices.length === 0 && (
                 <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-gray-300">
                   <div className="text-gray-400 mb-4">
                     <Settings className="h-12 w-12 mx-auto" />
