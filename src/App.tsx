@@ -7,6 +7,7 @@ import { FirebaseProvider } from './contexts/FirebaseContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { PrivateRoute } from './components/PrivateRoute';
 import { ProtectedComponent } from './components/ProtectedComponent';
+import { ScreenErrorBoundary } from './components/ScreenErrorBoundary';
 import { Layout } from './components/Layout';
 import { TechnicianLiquidationComponent } from './components/TechnicianLiquidation';
 import { BirthdayNotification } from './components/BirthdayNotification';
@@ -164,6 +165,7 @@ function AppContent() {
   return (
     <>
       <Layout currentView={currentView} onViewChange={setCurrentView}>
+        <ScreenErrorBoundary>
         <Suspense
           fallback={
             <div className="flex items-center justify-center py-16 text-sm text-gray-500">
@@ -173,6 +175,7 @@ function AppContent() {
         >
           {renderCurrentView()}
         </Suspense>
+        </ScreenErrorBoundary>
       </Layout>
       
       {/* Notificación de cumpleaños */}
