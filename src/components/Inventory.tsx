@@ -155,8 +155,13 @@ export function Inventory() {
       // Validación de duplicados de barcode
       const barcode = productData.barcode.trim();
       if (barcode) {
-        const db = (await import('firebase/firestore')).getFirestore();
-        const { query, collection, where, getDocs, limit } = await import('firebase/firestore');
+        // getDocsFromServer y no getDocs: en linea las dos consultan al
+        // servidor, pero sin conexion getDocs responde con la copia local, y
+        // ahora esa copia guarda muchos mas documentos. Validar la unicidad
+        // contra datos locales dejaria pasar un duplicado en silencio; asi
+        // falla con un error, que es lo correcto para una comprobacion de
+        // unicidad.
+        const { query, collection, where, getDocsFromServer: getDocs, limit } = await import('firebase/firestore');
         const productsRef = collection(db, 'products');
         let q;
         if (editingProduct) {
@@ -176,8 +181,9 @@ export function Inventory() {
       if (isCellphoneCategory(categoryId)) {
         const imei = productData.imei?.trim();
         if (imei) {
-          const db = (await import('firebase/firestore')).getFirestore();
-          const { query, collection, where, getDocs, limit } = await import('firebase/firestore');
+          // Misma razon que en el barcode: sin conexion, preferimos fallar a
+          // validar la unicidad contra la copia local.
+          const { query, collection, where, getDocsFromServer: getDocs, limit } = await import('firebase/firestore');
           const productsRef = collection(db, 'products');
           let q;
           if (editingProduct) {
