@@ -57,10 +57,10 @@ describe('saldo a favor disponible', () => {
 });
 
 describe('PENDIENTE: dos calculateSaleTotal distintos siguen conviviendo', () => {
-  // El de calculations.ts ignora comisiones y recargo. Ya no se usa para
-  // recalcular una devolucion (ese camino pasa por recalcularTrasDevolucion),
-  // pero sigue expuesto en el hook useCalculations. Este caso deja constancia
-  // de la diferencia para que no reaparezca por otra via.
+  // El de calculations.ts ignora comisiones y recargo. Ya no se usa para la
+  // ganancia de una devolucion (ese camino pasa por recalcularTrasDevolucion),
+  // pero salesThunks lo sigue llamando para subtotal y total. Este caso deja
+  // constancia de la diferencia para que no reaparezca por otra via.
   it('en efectivo ambos coinciden', () => {
     const items = [item(100000, 60000, 2)];
     const a = calculateSaleTotal(items, 0, 'efectivo', [], false);
