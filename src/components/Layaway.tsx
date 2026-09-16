@@ -7,6 +7,7 @@ import { layawaysService, productsService } from '../services/firebase/firestore
 import { customersService } from '../services/firebase/firestore';
 import { LayawayPlan, LayawayItem, LayawayPayment, PaymentMethod } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
+import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useFirebase } from '../contexts/FirebaseContext';
@@ -290,21 +291,6 @@ export function Layaway() {
 
 
   // Utilidades para pagos múltiples (similar a Sales.tsx)
-  const calculatePaymentCommission = (method: string, amount: number): number => {
-    switch (method) {
-      case 'card':
-        return (amount * 0.0299) + 300; // 2.99% + $300
-      case 'sistecredito':
-        return amount * 0.02; // 2%
-      case 'addi':
-        const addiCommission = amount * 0.065; // 6.5%
-        const addiIva = addiCommission * 0.19; // 19% IVA sobre la comisión
-        return addiCommission + addiIva;
-      case 'cash':
-      default:
-        return 0;
-    }
-  };
 
   const addPaymentMethod = (method: 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito', amount: number) => {
     if (amount <= 0) return;
@@ -463,6 +449,8 @@ export function Layaway() {
         profit: 0 // Sin ganancia hasta entregar producto
       }));
       
+      const comisionesDelAbono = allPaymentMethods.reduce((sum, pm) => sum + (pm.commission || 0), 0);
+
       const saleData = {
         items: saleItems,
         subtotal: totalAmount,
@@ -470,8 +458,11 @@ export function Layaway() {
         tax: 0,
         total: totalAmount,
         totalCost: 0, // Sin costo en abono
-        totalProfit: 0, // Sin ganancia en abono
+        // La ganancia del producto se reconoce al entregarlo, pero la comision
+        // del datafono se paga en el momento del abono: el abono la asume.
+        totalProfit: -comisionesDelAbono,
         profitMargin: 0, // Sin margen en abono
+        totalCommissions: comisionesDelAbono,
         paymentMethod: primaryMethod,
         paymentMethods: allPaymentMethods,
         customerName: layaway.customerName,

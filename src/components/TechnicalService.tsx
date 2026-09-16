@@ -7,6 +7,7 @@ import { technicalServicesService, productsService, courtesiesService } from '..
 import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, TechnicalServicePayment, PaymentMethod, Technician } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
+import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { getColombiaTimestamp } from '../utils/dateUtils';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -865,21 +866,6 @@ export function TechnicalService() {
 
 
   // Utilidades para pagos múltiples (similar a Sales.tsx)
-  const calculatePaymentCommission = (method: string, amount: number): number => {
-    switch (method) {
-      case 'card':
-        return (amount * 0.0299) + 300; // 2.99% + $300
-      case 'sistecredito':
-        return amount * 0.02; // 2%
-      case 'addi':
-        const addiCommission = amount * 0.065; // 6.5%
-        const addiIva = addiCommission * 0.19; // 19% IVA sobre la comisión
-        return addiCommission + addiIva;
-      case 'cash':
-      default:
-        return 0;
-    }
-  };
 
   const addPaymentMethod = (method: 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito', amount: number) => {
     if (amount <= 0) return;
@@ -1002,7 +988,10 @@ export function TechnicalService() {
       // Si es pago parcial, la ganancia es proporcional a la parte de mano de obra que le corresponde al negocio
       const laborProportion = serviceTotal > 0 ? serviceLaborCost / serviceTotal : 0;
       const businessLaborProportion = laborProportion * 0.5; // 50% del labor va al negocio
-      const realProfit = totalAmount * businessLaborProportion;
+      // La comision del datafono es un egreso real del negocio y sale de la
+      // ganancia, igual que en Ventas.
+      const comisionesDelAbono = allPaymentMethods.reduce((sum, pm) => sum + (pm.commission || 0), 0);
+      const realProfit = (totalAmount * businessLaborProportion) - comisionesDelAbono;
       const realCost = totalAmount - realProfit;
       const realMargin = totalAmount > 0 ? (realProfit / totalAmount) * 100 : 0;
 
