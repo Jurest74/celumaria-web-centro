@@ -7,14 +7,12 @@ import {
   Tag, 
   Package, 
   Eye, 
-  EyeOff,
   X,
   Palette,
   Hash,
   AlertTriangle
 } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { useSectionRealtime } from '../hooks/useOnDemandData';
 import { selectCategories } from '../store/selectors';
 import { categoriesService } from '../services/firebase/firestore';
 import { Category } from '../types';
@@ -111,7 +109,7 @@ export function Categories() {
         console.log('Categoría actualizada exitosamente');
       } else {
         console.log('Creando nueva categoría');
-        const newCategoryId = await categoriesService.add(categoryData);
+        const newCategoryId = await categoriesService.add({ ...categoryData, isActive: true });
         console.log('Nueva categoría creada con ID:', newCategoryId);
         
         // Reset form and state BEFORE unmounting the form

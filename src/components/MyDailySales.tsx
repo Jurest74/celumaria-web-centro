@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Receipt, DollarSign, Calendar, User, CreditCard, Banknote, Smartphone, Clock, Search, Filter, X } from 'lucide-react';
-import { useAppSelector } from '../hooks/useAppSelector';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
 import { InvoiceModal } from './Sales';

@@ -5,7 +5,7 @@ import { useNotification } from '../contexts/NotificationContext';
 import { collection, getDocs, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { auth, db } from '../config/firebase';
+import { db } from '../config/firebase';
 import { AppUser, UserRole, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS } from '../utils/permissions';
 

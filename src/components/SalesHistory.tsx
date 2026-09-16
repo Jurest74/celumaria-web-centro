@@ -47,7 +47,7 @@ import {
   Gift
 } from 'lucide-react';
 // ...existing code...
-import { Sale, Customer } from '../types';
+import { Sale } from '../types';
 import { formatCurrency, formatCurrencyForExport } from '../utils/currency';
 import { Receipt } from 'lucide-react';
 import { InvoiceModal } from './Sales'; // Importar el modal de factura correctamente

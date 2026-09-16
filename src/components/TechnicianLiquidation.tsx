@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Clock, CheckCircle, Filter, Search, User, Calendar, Eye, Check, FileText, Package, Wrench, TrendingUp, Banknote, Users } from 'lucide-react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, orderBy, getDocs, getDoc } from 'firebase/firestore';
+import { useState, useEffect, useMemo } from 'react';
+import { DollarSign, Clock, CheckCircle, Search } from 'lucide-react';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, orderBy, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { TechnicalService, TechnicianLiquidation, Technician } from '../types';

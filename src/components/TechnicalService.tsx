@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, AlertTriangle, AlertCircle, Settings, ArrowUpRight, Gift } from 'lucide-react';
+import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, AlertTriangle, AlertCircle, Settings, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectTechnicalServices, selectProducts, selectCustomers } from '../store/selectors';
 import { technicalServicesService, courtesiesService } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
-import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, TechnicalServicePayment, PaymentMethod, Technician } from '../types';
+import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, PaymentMethod, Technician } from '../types';
 import { formatCurrency, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { getColombiaTimestamp } from '../utils/dateUtils';
@@ -120,24 +120,6 @@ export function TechnicalService() {
   // Los datos se recargan automáticamente al navegar a esta sección
   // Si el usuario está quieto aquí, no necesita ver actualizaciones de otros
 
-  // Cargar servicios técnicos al cambiar filtro de estado
-  useEffect(() => {
-    const loadServices = async () => {
-      try {
-        if (statusFilter === 'all') {
-          const services = await technicalServicesService.getAll();
-          dispatch(fetchTechnicalServices.fulfilled(services, '', undefined));
-        } else {
-          const services = await technicalServicesService.getByStatus(statusFilter as 'active' | 'completed' | 'cancelled');
-          dispatch(fetchTechnicalServices.fulfilled(services, '', undefined));
-        }
-      } catch (error) {
-        console.error('Error loading technical services:', error);
-      }
-    };
-
-    loadServices();
-  }, [statusFilter, dispatch]);
   const allTechnicalServices = useAppSelector(selectTechnicalServices);
   const products = useAppSelector(selectProducts);
   const customers = useAppSelector(selectCustomers);
@@ -1483,7 +1465,7 @@ export function TechnicalService() {
             console.error('Error eliminando abono en ventas:', err);
           }
           // Actualizar estado local inmediatamente
-          const updatedLayaway: LayawayPlan = {
+          const updatedLayaway = {
             ...selectedTechnicalService,
             payments: updatedPayments,
             remainingBalance: newRemainingBalance,
@@ -1568,7 +1550,7 @@ export function TechnicalService() {
           await technicalServicesService.update(selectedTechnicalService.id, updateData);
 
           // Actualizar estado local inmediatamente
-          const updatedLayaway: LayawayPlan = {
+          const updatedLayaway = {
             ...selectedTechnicalService,
             items: updatedItems,
             status: newStatus,

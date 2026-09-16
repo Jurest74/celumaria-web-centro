@@ -15,7 +15,6 @@ import { usePaginatedPurchases } from '../hooks/usePaginatedPurchases';
 import { usePurchasesStats } from '../hooks/usePurchasesStats';
 import { usePurchaseReturns } from '../hooks/usePurchaseReturns';
 import { 
-  History, 
   Search, 
   Calendar, 
   DollarSign, 

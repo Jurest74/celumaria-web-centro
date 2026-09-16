@@ -232,7 +232,7 @@ export function usePaginatedSales({
         const snap = useFreshData ? await getDocsFromServer(q) : await getDocs(q);
         console.log('🔍 Búsqueda/Filtros activos - ventas obtenidas:', snap.docs.length);
 
-        salesList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Sale[];
+        salesList = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as Record<string, unknown>) })) as Sale[];
 
         // Aplicar filtros del cliente (fecha, searchTerm, etc.)
         salesList = filterSalesClientSide(salesList);

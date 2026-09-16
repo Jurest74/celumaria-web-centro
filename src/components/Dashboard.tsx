@@ -1,8 +1,7 @@
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { TrendingUp, Package, AlertTriangle, DollarSign, ShoppingCart, Calendar, Target, Warehouse, Users, Tag, ArrowUpRight, ArrowDownRight, BarChart3, PieChart, Activity, Zap } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { TrendingUp, Package, AlertTriangle, DollarSign, ShoppingCart, Calendar, Target, Warehouse, Users, Tag, PieChart, Activity } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
-import { useFirebase } from '../contexts/FirebaseContext';
 import { selectProducts, selectSales, selectLayaways, selectCustomers, selectCategories } from '../store/selectors';
 import { calculations, productCalculations, salesCalculations } from '../utils/calculations';
 import { formatCurrency } from '../utils/currency';

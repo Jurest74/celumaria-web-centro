@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Sale, Product, Category } from '../types';
+import { Sale } from '../types';
 import { useAppSelector } from './useAppSelector';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
 

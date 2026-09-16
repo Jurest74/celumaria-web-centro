@@ -24,12 +24,11 @@ import {
   CreditCard,
   Banknote,
   Receipt,
-  ArrowUpRight,
   Gift
 } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { selectTechnicalServices, selectCustomers } from '../store/selectors';
-import { TechnicalService, Customer } from '../types';
+import { TechnicalService } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useSectionRealtime } from '../hooks/useOnDemandData';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';

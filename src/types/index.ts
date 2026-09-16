@@ -244,7 +244,7 @@ export interface TechnicalService {
   downPayment: number;
   remainingBalance: number;
   payments: TechnicalServicePayment[];
-  status: 'active' | 'completed' | 'cancelled';
+  status: 'active' | 'completed' | 'cancelled' | 'delivered';
   createdAt: string;
   updatedAt: string;
   estimatedCompletionDate?: string;
@@ -399,7 +399,7 @@ export interface TechnicianLiquidation {
   }[];
   totalLaborCost: number;
   totalTechnicianShare: number;
-  status: 'pending' | 'paid';
+  status: 'pending' | 'paid' | 'completed';
   createdAt: string;
   paidAt?: string;
   paidBy?: string; // ID del usuario que marcó como pagado

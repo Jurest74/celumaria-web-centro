@@ -15,7 +15,6 @@ import {
   writeBatch,
   runTransaction,
   increment,
-  serverTimestamp,
   waitForPendingWrites
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -675,22 +674,27 @@ export const salesService = {
       const todaySales = allSales.filter(sale => {
         if (!sale.createdAt) return false;
 
+        // createdAt llega en varias formas segun como se escribio la venta
+        // (texto ISO, Timestamp de Firestore, o {seconds}); el tipo solo
+        // declara la primera, asi que se maneja sin estrechar.
+        const createdAt = sale.createdAt as any;
+
         // Ignorar ventas con timestamps corruptos
-        if (sale.createdAt._methodName === 'serverTimestamp') {
+        if (createdAt._methodName === 'serverTimestamp') {
           console.warn('⚠️ Venta con timestamp corrupto en MyDailySales, ignorando:', sale.id);
           return false;
         }
 
         // Convertir a Date, soportando diferentes formatos
         let saleDate: Date;
-        if (typeof sale.createdAt === 'string') {
-          saleDate = new Date(sale.createdAt);
-        } else if (sale.createdAt.toDate && typeof sale.createdAt.toDate === 'function') {
-          saleDate = sale.createdAt.toDate();
-        } else if (sale.createdAt.seconds) {
-          saleDate = new Date(sale.createdAt.seconds * 1000);
+        if (typeof createdAt === 'string') {
+          saleDate = new Date(createdAt);
+        } else if (createdAt.toDate && typeof createdAt.toDate === 'function') {
+          saleDate = createdAt.toDate();
+        } else if (createdAt.seconds) {
+          saleDate = new Date(createdAt.seconds * 1000);
         } else {
-          saleDate = new Date(sale.createdAt);
+          saleDate = new Date(createdAt);
         }
 
         return bogotaDateKey(saleDate) === hoyBogota;

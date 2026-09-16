@@ -16,7 +16,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  ChevronUp,
   Eye,
   RefreshCw,
   ArrowUpRight
@@ -26,7 +25,6 @@ import { selectCustomers, selectLayaways, selectSales } from '../store/selectors
 import { customersService } from '../services/firebase/firestore';
 import { usePaginatedCustomers } from '../hooks/usePaginatedCustomers';
 import { useNotification } from '../contexts/NotificationContext';
-import { useSectionRealtime } from '../hooks/useOnDemandData';
 import { Customer } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,7 +35,7 @@ import {
   calculateAge,
   formatDisplayDate,
   formatInputDate,
-  bogotaDateKey,
+  bogotaDateKey
 } from '../utils/dateUtils';
 import { 
   validateCustomerData, 

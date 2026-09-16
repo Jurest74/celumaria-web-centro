@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, TrendingUp, PiggyBank, AlertTriangle, AlertCircle, Trash2, ArrowUpRight } from 'lucide-react';
+import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Clock, X, TrendingUp, PiggyBank, AlertTriangle, AlertCircle } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectLayaways, selectProducts, selectCustomers } from '../store/selectors';
 import { layawaysService, productsService } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
-import { LayawayPlan, LayawayItem, LayawayPayment, PaymentMethod } from '../types';
+import { LayawayPlan, LayawayItem, PaymentMethod } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { calculatePaymentCommission } from '../utils/paymentCommission';
 import { useNotification } from '../contexts/NotificationContext';
@@ -155,19 +155,12 @@ export function Layaway() {
   const dispatch = useAppDispatch();
   const firebase = useFirebase();
 
-  // Cargar todos los planes separe (el filtrado se hace en filteredLayaways)
+  // Cargar planes separe al montar el componente.
+  // Antes se leian aparte y se despachaba fetchLayaways.fulfilled, una accion
+  // que ningun reducer atiende: la lectura se pagaba y el resultado se
+  // descartaba. El thunk si deja los datos en el store.
   useEffect(() => {
-    const loadLayaways = async () => {
-      try {
-        const layaways = await layawaysService.getAll();
-        console.log('📋 Cargando todos los planes separe:', layaways.length);
-        dispatch(fetchLayaways.fulfilled(layaways, '', undefined));
-      } catch (error) {
-        console.error('Error loading layaways:', error);
-      }
-    };
-
-    loadLayaways();
+    dispatch(fetchLayaways());
   }, [dispatch]);
   const allLayaways = useAppSelector(selectLayaways);
   const products = useAppSelector(selectProducts);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Gift, Calendar, User, Package, DollarSign, Search, Filter, TrendingDown } from 'lucide-react';
+import { Gift, Package, DollarSign, Search, Filter, TrendingDown } from 'lucide-react';
 import { courtesiesService } from '../services/firebase/firestore';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';

@@ -1,6 +1,5 @@
 import { createSelector } from '@reduxjs/toolkit';
 import { RootState } from '../index';
-import { DashboardStats } from '../../types';
 import { bogotaDateKey } from '../../utils/dateUtils';
 
 // Firebase selectors

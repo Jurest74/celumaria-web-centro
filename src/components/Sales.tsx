@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Minus, ShoppingCart, CreditCard, DollarSign, Receipt, Scan, X, User, Search, Wallet, Gift } from 'lucide-react';
+import { Plus, Minus, ShoppingCart, DollarSign, Receipt, X, User, Search, Wallet, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { selectProducts, selectSales } from '../store/selectors';
 import { salesService, courtesiesService } from '../services/firebase/firestore';
-import { SaleItem, PaymentMethod } from '../types';
+import { SaleItem } from '../types';
 import type { Customer } from '../types';
-import { customersService } from '../services/firebase/firestore';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
 // ⚡ OPTIMIZADO: No usar useSectionRealtime - datos se cargan al navegar
