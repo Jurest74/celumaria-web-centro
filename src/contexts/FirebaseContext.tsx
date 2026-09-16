@@ -279,15 +279,17 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const subscribeToProducts = useCallback(() => {
     const unsubscribe = productsService.subscribe((products) => {
       dispatch(setProducts(products));
+      markSectionAsLoaded('products');
     });
     return unsubscribe;
-  }, [dispatch]);
+  }, [dispatch, markSectionAsLoaded]);
   const subscribeToCategories = useCallback(() => {
     const unsubscribe = categoriesService.subscribe((categories) => {
       dispatch(setCategories(categories));
+      markSectionAsLoaded('categories');
     });
     return unsubscribe;
-  }, [dispatch]);
+  }, [dispatch, markSectionAsLoaded]);
   const subscribeToSales = useCallback(() => {
     const unsubscribe = salesService.subscribe((sales) => {
       dispatch(setSales(sales));
@@ -297,9 +299,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const subscribeToCustomers = useCallback(() => {
     const unsubscribe = customersService.subscribe((customers) => {
       dispatch(setCustomers(customers));
+      markSectionAsLoaded('customers');
     });
     return unsubscribe;
-  }, [dispatch]);
+  }, [dispatch, markSectionAsLoaded]);
   const subscribeToLayaways = useCallback(() => {
     const unsubscribe = layawaysService.subscribe((layaways) => {
       dispatch(setLayaways(layaways));

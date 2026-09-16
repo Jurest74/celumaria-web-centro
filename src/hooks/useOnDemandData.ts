@@ -60,16 +60,26 @@ export function useDashboardData() {
   };
 }
 
-// Hook para cargar datos cuando se navega a una sección
-// ⚡ OPTIMIZADO: Invalida caché al entrar y carga datos frescos
+// Hook para cargar datos cuando se navega a una sección.
+//
+// Antes cada navegación invalidaba la caché y volvía a bajar las colecciones
+// completas, asi que la caché de 10 minutos nunca se usaba: ir al Panel bajaba
+// productos, ventas, planes separe, clientes y categorías otra vez, aunque
+// vinieras de ahí hace un minuto. Ahora la caché hace su trabajo.
+//
+// Los datos siguen refrescándose: cada operación de escritura invalida lo que
+// toca, las pantallas que necesitan verse vivas usan useSectionRealtime, y a
+// los 10 minutos la caché caduca sola. Y el stock ya no depende de que la
+// pantalla esté al día: las ventas y reservas lo verifican en el servidor
+// dentro de una transacción, asi que un dato en pantalla algo viejo no puede
+// producir una venta sin existencias.
 export function useNavigationData(currentView: string) {
   const {
     loadProducts,
     loadSales,
     loadLayaways,
     loadCustomers,
-    loadCategories,
-    invalidateCache
+    loadCategories
   } = useFirebase();
 
   useEffect(() => {
@@ -79,11 +89,6 @@ export function useNavigationData(currentView: string) {
       switch (currentView) {
         case 'dashboard':
           // Cargar todos los datos necesarios para el dashboard
-          invalidateCache('products');
-          invalidateCache('sales');
-          invalidateCache('layaways');
-          invalidateCache('customers');
-          invalidateCache('categories');
 
           await Promise.all([
             loadProducts(),
@@ -95,30 +100,20 @@ export function useNavigationData(currentView: string) {
           break;
           
         case 'inventory':
-          // Invalidar y recargar productos y categorías
-          invalidateCache('products');
-          invalidateCache('categories');
           await loadProducts();
           await loadCategories();
           break;
 
         case 'categories':
-          // Invalidar y recargar categorías
-          invalidateCache('categories');
           await loadCategories();
           break;
 
         case 'sales':
-          // Invalidar y recargar productos y clientes para el POS
-          invalidateCache('products');
-          invalidateCache('customers');
           await loadProducts();
           await loadCustomers();
           break;
 
         case 'sales-history':
-          // Invalidar y recargar ventas al entrar al historial
-          invalidateCache('sales');
           await loadSales();
           break;
 
@@ -134,8 +129,6 @@ export function useNavigationData(currentView: string) {
           break;
 
         case 'customers':
-          // Invalidar y recargar clientes
-          invalidateCache('customers');
           await loadCustomers();
           break;
 
@@ -145,10 +138,6 @@ export function useNavigationData(currentView: string) {
           break;
 
         case 'layaway':
-          // Invalidar y recargar datos necesarios para planes separe
-          invalidateCache('layaways');
-          invalidateCache('products');
-          invalidateCache('customers');
           await loadLayaways();
           await loadProducts();
           await loadCustomers();
@@ -161,8 +150,6 @@ export function useNavigationData(currentView: string) {
 
         case 'technical-service':
         case 'technical-service-center':
-          // Invalidar y recargar clientes para servicios técnicos
-          invalidateCache('customers');
           await loadCustomers();
           // Los servicios técnicos se cargan bajo demanda en el componente
           break;
@@ -178,7 +165,7 @@ export function useNavigationData(currentView: string) {
     };
 
     loadDataForView();
-  }, [currentView, loadProducts, loadSales, loadLayaways, loadCustomers, loadCategories, invalidateCache]);
+  }, [currentView, loadProducts, loadSales, loadLayaways, loadCustomers, loadCategories]);
 
   return {};
 }

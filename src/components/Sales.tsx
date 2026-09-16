@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Minus, ShoppingCart, DollarSign, Receipt, X, User, Search, Wallet, Gift } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
+import { useSectionRealtime } from '../hooks/useOnDemandData';
 import { selectProducts } from '../store/selectors';
 import { salesService, courtesiesService } from '../services/firebase/firestore';
 import { SaleItem } from '../types';
@@ -356,6 +357,10 @@ export function InvoiceModal({ sale, onClose }: { sale: any; onClose: () => void
 }
 
 export function Sales() {
+  // El stock cambia mientras se vende: se escucha en vivo en vez de leerlo
+  // otra vez en cada entrada a la pantalla.
+  useSectionRealtime('products');
+
   // ⚡ OPTIMIZADO: NO usar listeners en tiempo real
   // Los productos se cargan al navegar a esta vista (POS)
   // Los cambios se verán al refrescar o cambiar de vista y volver
