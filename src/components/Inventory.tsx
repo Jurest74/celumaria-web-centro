@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2, AlertTriangle, Package, TrendingUp, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 import { addDoc, collection } from 'firebase/firestore';
 import { useAppSelector } from '../hooks/useAppSelector';
@@ -12,6 +12,7 @@ import { Product } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
 import { usePaginatedProducts } from '../hooks/usePaginatedProducts';
+import { conteosInventario } from '../services/firebase/firestore';
 import { getColombiaTimestamp } from '../utils/dateUtils';
 
 export function Inventory() {
@@ -28,8 +29,10 @@ export function Inventory() {
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [isDeletingProduct, setIsDeletingProduct] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [allProductsLocal, setAllProductsLocal] = useState<Product[]>([]);
+  const [, setRefreshKey] = useState(0);
+  const [conteos, setConteos] = useState<{ total: number; sinStock: number; stockBajo: number } | null>(null);
+  const [valorInventario, setValorInventario] = useState<number | null>(null);
+  const [calculandoValor, setCalculandoValor] = useState(false);
   
   // Estados para campos de entrada formateados
   const [purchasePriceDisplay, setPurchasePriceDisplay] = useState('');
@@ -39,20 +42,40 @@ export function Inventory() {
   
   const formRef = useRef<HTMLFormElement>(null);
   
-  // Función para cargar todos los productos para estadísticas
+  // Las cifras del encabezado se resuelven en el servidor: antes se traia la
+  // coleccion entera de productos solo para contarlos, lo que anulaba la
+  // paginacion y disparaba la cuota de Firestore con un catalogo grande.
   const loadAllProducts = useCallback(async () => {
     try {
-      const products = await productsService.getAll();
-      setAllProductsLocal(products);
+      setConteos(await conteosInventario());
     } catch (error) {
-      console.error('Error loading all products for stats:', error);
+      console.error('Error obteniendo conteos de inventario:', error);
     }
   }, []);
 
-  // Cargar productos al inicio
   useEffect(() => {
     loadAllProducts();
   }, [loadAllProducts]);
+
+  // El valor del inventario es stock x precio de compra, y eso no se puede
+  // agregar en el servidor: hay que leer los productos. Se calcula solo cuando
+  // alguien lo pide, no en cada visita.
+  const calcularValorInventario = useCallback(async () => {
+    setCalculandoValor(true);
+    try {
+      const products = await productsService.getAll();
+      setValorInventario(
+        products.reduce(
+          (acc, p) => acc + (typeof p.purchasePrice === 'number' ? p.purchasePrice : 0) * (typeof p.stock === 'number' ? p.stock : 0),
+          0
+        )
+      );
+    } catch (error) {
+      console.error('Error calculando el valor del inventario:', error);
+    } finally {
+      setCalculandoValor(false);
+    }
+  }, []);
 
   // Hook de paginación para productos
   const {
@@ -362,10 +385,9 @@ export function Inventory() {
 
 
   // Estadísticas/resúmenes de inventario usando productos locales actualizados
-  const totalProducts = useMemo(() => allProductsLocal.length, [allProductsLocal, refreshKey]);
-  const outOfStock = useMemo(() => allProductsLocal.filter((p: Product) => p.stock === 0).length, [allProductsLocal, refreshKey]);
-  const lowStock = useMemo(() => allProductsLocal.filter((p: Product) => p.stock > 0 && p.stock <= 5).length, [allProductsLocal, refreshKey]);
-  const totalInventoryValue = useMemo(() => allProductsLocal.reduce((acc: number, p: Product) => acc + (typeof p.purchasePrice === 'number' && typeof p.stock === 'number' ? p.purchasePrice * p.stock : 0), 0), [allProductsLocal, refreshKey]);
+  const totalProducts = conteos?.total ?? 0;
+  const outOfStock = conteos?.sinStock ?? 0;
+  const lowStock = conteos?.stockBajo ?? 0;
 
 
   return (
@@ -474,9 +496,21 @@ export function Inventory() {
             <p className="text-xs font-medium text-slate-600 uppercase tracking-wide mb-0.5 group-hover:text-slate-700 transition-colors duration-300">
               Valor Inventario
             </p>
-            <p className="text-base font-bold text-slate-900 group-hover:text-emerald-900 transition-colors duration-300">
-              {formatCurrency(totalInventoryValue)}
-            </p>
+            {valorInventario !== null ? (
+              <p className="text-base font-bold text-slate-900 group-hover:text-emerald-900 transition-colors duration-300">
+                {formatCurrency(valorInventario)}
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={calcularValorInventario}
+                disabled={calculandoValor}
+                className="text-xs font-medium text-emerald-700 hover:text-emerald-900 underline disabled:opacity-50"
+                title="Calcular el valor del inventario (lee todos los productos)"
+              >
+                {calculandoValor ? 'Calculando…' : 'Calcular'}
+              </button>
+            )}
           </div>
         </div>
       </div>

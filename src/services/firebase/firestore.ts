@@ -13,6 +13,7 @@ import {
   onSnapshot,
   writeBatch,
   runTransaction,
+  getCountFromServer,
   increment,
   waitForPendingWrites
 } from 'firebase/firestore';
@@ -309,6 +310,39 @@ export const categoriesService = {
 };
 
 // Products Service
+/**
+ * Conteos del inventario sin traer los productos.
+ *
+ * La pantalla de Inventario pagina la lista, pero calculaba sus cifras
+ * llamando a productsService.getAll(): leia la coleccion entera en cada visita
+ * y otra vez despues de crear, editar o eliminar cada producto, asi que la
+ * paginacion no ahorraba nada. Con un catalogo grande eso es lo que dispara la
+ * cuota de Firestore.
+ *
+ * getCountFromServer resuelve el conteo en el servidor y no devuelve ningun
+ * documento. El rango de stock usa un solo campo, asi que no exige indice
+ * compuesto.
+ */
+export async function conteosInventario(umbralStockBajo = 5): Promise<{
+  total: number;
+  sinStock: number;
+  stockBajo: number;
+}> {
+  const productos = collection(db, COLLECTIONS.PRODUCTS);
+
+  const [total, sinStock, stockBajo] = await Promise.all([
+    getCountFromServer(productos),
+    getCountFromServer(query(productos, where('stock', '==', 0))),
+    getCountFromServer(query(productos, where('stock', '>', 0), where('stock', '<=', umbralStockBajo)))
+  ]);
+
+  return {
+    total: total.data().count,
+    sinStock: sinStock.data().count,
+    stockBajo: stockBajo.data().count
+  };
+}
+
 export const productsService = {
   // Get all products
   async getAll(): Promise<Product[]> {
