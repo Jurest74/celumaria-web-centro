@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pruebas:servicios": "npx -y firebase-tools@14 emulators:exec --config firebase.pruebas.json --project demo-celumaria --only firestore,auth \"vitest run --config vitest.funcional.config.ts\"",
+    "pruebas:navegador": "npx -y firebase-tools@14 emulators:exec --config firebase.pruebas.json --project demo-celumaria --only firestore,auth \"playwright test\"",
+    "pruebas:todo": "npm run pruebas:servicios && npm run pruebas:navegador"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.0.1",
@@ -24,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@playwright/test": "^1.63.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

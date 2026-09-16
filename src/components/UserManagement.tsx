@@ -5,7 +5,7 @@ import { useNotification } from '../contexts/NotificationContext';
 import { collection, getDocs, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { db } from '../config/firebase';
+import { db, firebaseConfig, conectarAuthAlEmulador } from '../config/firebase';
 import { AppUser, UserRole, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS } from '../utils/permissions';
 
@@ -87,16 +87,13 @@ export function UserManagement() {
 
       // Crear una instancia secundaria de Firebase Auth para crear usuarios
       // sin afectar la sesión actual del administrador
-      const secondaryApp = initializeApp({
-        apiKey: "AIzaSyC2qH28cydE9OKg_9cERvQ3IBRReXHPNLo",
-        authDomain: "finanzas-personales-60d5c.firebaseapp.com",
-        projectId: "finanzas-personales-60d5c",
-        storageBucket: "finanzas-personales-60d5c.firebasestorage.app",
-        messagingSenderId: "1010030707667",
-        appId: "1:1010030707667:web:0a82f7da2be72de30ae526"
-      }, 'Secondary');
+      // Misma configuración de la app. Antes estaba copiada a mano aquí: al
+      // copiar la app para otra sede se podía olvidar y crear los usuarios en
+      // el proyecto equivocado, y en modo pruebas los habría creado en producción.
+      const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
 
       const secondaryAuth = getAuth(secondaryApp);
+      conectarAuthAlEmulador(secondaryAuth);
 
       // Crear usuario en la instancia secundaria (no afecta la sesión principal)
       const userCredential = await createUserWithEmailAndPassword(

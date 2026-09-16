@@ -1,1 +1,6 @@
 node_modules
+
+# Pruebas funcionales
+test-results/
+pruebas/reporte-navegador/
+firestore-debug.log
