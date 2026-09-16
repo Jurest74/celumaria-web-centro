@@ -13,7 +13,6 @@ import { useAppDispatch } from '../hooks/useAppDispatch';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { processProductReturn, deleteSale } from '../store/thunks/salesThunks';
 import { fetchCustomers } from '../store/thunks/customersThunks';
-import { customersService } from '../services/firebase/firestore';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -339,10 +338,22 @@ export function SalesHistory() {
           const { layawaysService } = await import('../services/firebase/firestore');
           const allLayaways = await layawaysService.getAll();
           const layaway = allLayaways.find(l => l.id === deleteModal.saleData.layawayId);
-          if (layaway) {
-            // Buscar el pago por monto y fecha aproximada
-            const abonoPayment = layaway.payments.find(p => p.amount === deleteModal.saleData.total);
-            if (abonoPayment) {
+          if (!layaway) {
+            throw new Error('No se encontró el plan separe de este abono. No se eliminó nada para no descuadrar el plan.');
+          }
+          {
+            // El abono no guarda el id del pago, asi que se busca por monto.
+            // Si hay varios pagos iguales no se puede saber cual es: se
+            // prefiere no borrar antes que descontar el equivocado.
+            const candidatos = layaway.payments.filter(p => p.amount === deleteModal.saleData.total);
+            if (candidatos.length === 0) {
+              throw new Error('No se encontró el pago correspondiente dentro del plan separe. No se eliminó nada.');
+            }
+            if (candidatos.length > 1) {
+              throw new Error(`El plan separe tiene ${candidatos.length} pagos por ese mismo monto y no se puede saber cuál corresponde. Elimínalo desde el plan separe.`);
+            }
+            const abonoPayment = candidatos[0];
+            {
               // Eliminar el pago usando la lógica del plan separe
               // Si tienes una función pública para cancelar pago, úsala aquí
               // Si no, elimina el pago y actualiza el plan separe
@@ -378,9 +389,18 @@ export function SalesHistory() {
               await layawaysService.update(layaway.id, updateData);
             }
           }
-        } catch (err) {
-          // Si falla, solo mostrar error en consola
+        } catch (err: any) {
+          // Antes solo se registraba en consola y la venta se borraba igual:
+          // el plan separe quedaba con un pago cuya venta ya no existia, o al
+          // reves. Se detiene la eliminacion y se avisa.
           console.error('Error eliminando abono en plan separe:', err);
+          showNotification(
+            'error',
+            'No se eliminó la venta',
+            err?.message || 'No se pudo actualizar el plan separe, así que la venta no se eliminó para no dejar los datos descuadrados.'
+          );
+          setIsProcessing(false);
+          return;
         }
       }
       await dispatch(deleteSale(deleteModal.saleId)).unwrap();
@@ -415,27 +435,29 @@ export function SalesHistory() {
       // Calculate refund amount
       const refundAmount = returnModal.productSalePrice * returnModal.quantity;
       
-      // Process the product return first
+      // La devolucion y el abono al saldo van en la misma escritura: antes
+      // eran dos pasos, y si el segundo fallaba el producto quedaba devuelto
+      // sin que el cliente recibiera su saldo, con el usuario reintentando
+      // una devolucion que ya se habia hecho.
+      const clienteAcredita = returnModal.selectedCustomerId
+        ? customers.find(c => c.id === returnModal.selectedCustomerId)
+        : undefined;
+
       await dispatch(processProductReturn({
         saleId: returnModal.saleId,
         productId: returnModal.productId,
-        returnQuantity: returnModal.quantity
+        returnQuantity: returnModal.quantity,
+        creditCustomerId: clienteAcredita?.id,
+        refundAmount: clienteAcredita ? refundAmount : undefined
       })).unwrap();
 
-      // If a customer is selected, add the refund amount to their credit balance
       if (returnModal.selectedCustomerId) {
-        const selectedCustomer = customers.find(c => c.id === returnModal.selectedCustomerId);
-        if (selectedCustomer) {
-          const newCreditBalance = (selectedCustomer.credit || 0) + refundAmount;
-          await customersService.update(returnModal.selectedCustomerId, {
-            credit: newCreditBalance
-          });
-          
+        if (clienteAcredita) {
           // Refresh customers data
           dispatch(fetchCustomers());
           
           showNotification('success', 'Producto devuelto', 
-            `El producto ha sido devuelto exitosamente. Se han agregado ${formatCurrency(refundAmount)} al saldo a favor de ${selectedCustomer.name}. El inventario ha sido actualizado.`);
+            `El producto ha sido devuelto exitosamente. Se han agregado ${formatCurrency(refundAmount)} al saldo a favor de ${clienteAcredita.name}. El inventario ha sido actualizado.`);
         } else {
           showNotification('success', 'Producto devuelto', 'El producto ha sido devuelto exitosamente. El inventario ha sido actualizado.');
         }

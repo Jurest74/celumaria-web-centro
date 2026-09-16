@@ -20,11 +20,17 @@ export const processProductReturn = createAsyncThunk(
     { 
       saleId, 
       productId, 
-      returnQuantity 
+      returnQuantity,
+      creditCustomerId,
+      refundAmount
     }: { 
       saleId: string; 
       productId: string; 
       returnQuantity: number; 
+      // Cuando la devolucion se abona al saldo del cliente, entra en el mismo
+      // batch: o quedan la devolucion y el saldo, o no queda ninguno.
+      creditCustomerId?: string;
+      refundAmount?: number;
     },
     { dispatch, getState }
   ) => {
@@ -102,6 +108,16 @@ export const processProductReturn = createAsyncThunk(
       stock: increment(returnQuantity),
       updatedAt: getColombiaTimestamp()
     });
+
+    // El saldo se suma con increment, no con un valor absoluto calculado en el
+    // cliente: leer el saldo de Redux y escribir el total pisaba cualquier
+    // cambio hecho entremedio (otra devolucion, una venta que use el saldo).
+    if (creditCustomerId && refundAmount && refundAmount > 0) {
+      batch.update(doc(db, COLLECTIONS.CUSTOMERS, creditCustomerId), {
+        credit: increment(refundAmount),
+        updatedAt: getColombiaTimestamp()
+      });
+    }
 
     await batch.commit();
 
