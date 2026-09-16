@@ -7,7 +7,6 @@ import { selectProducts, selectActiveCategories } from '../store/selectors';
 import { productsService } from '../services/firebase/firestore';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { db } from '../config/firebase';
-import { deleteProduct } from '../store/slices/productsSlice';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Product } from '../types';
