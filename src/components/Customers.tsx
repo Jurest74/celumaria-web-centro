@@ -229,9 +229,18 @@ export function Customers() {
       return;
     }
     
+    // El saldo a favor es plata que el negocio le debe al cliente, y al
+    // borrarlo desaparece sin dejar rastro. No se bloquea porque el saldo no
+    // es editable desde ninguna pantalla y el cliente quedaria imposible de
+    // eliminar; se advierte con el monto a la vista.
+    const saldoAFavor = customer.credit || 0;
+    const avisoSaldo = saldoAFavor > 0
+      ? ` ATENCIÓN: este cliente tiene ${formatCurrency(saldoAFavor)} de saldo a favor que se perderá.`
+      : '';
+
     showConfirm(
       'Confirmar eliminación',
-      `¿Estás seguro de que quieres eliminar al cliente "${customer.name}"? Esta acción no se puede deshacer.`,
+      `¿Estás seguro de que quieres eliminar al cliente "${customer.name}"? Esta acción no se puede deshacer.${avisoSaldo}`,
       async () => {
         const deleteId = `delete-${customer.id}`;
         setOperationLoadingState(deleteId, true);

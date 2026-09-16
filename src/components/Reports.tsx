@@ -227,7 +227,8 @@ export function Reports() {
           paymentMethods[method].value += payment.amount || 0;
           paymentMethods[method].count += 1;
           // Distribuir ganancia proporcionalmente
-          const saleProfitPerPayment = (sale.totalProfit || 0) * ((payment.amount || 0) / (sale.total || 1));
+          const ingresoVenta = sale.finalTotal ?? sale.total ?? 0;
+          const saleProfitPerPayment = (sale.totalProfit || 0) * ((payment.amount || 0) / (ingresoVenta || 1));
           paymentMethods[method].profit += saleProfitPerPayment;
         });
       } else {
@@ -236,7 +237,7 @@ export function Reports() {
         if (!paymentMethods[method]) {
           paymentMethods[method] = { value: 0, count: 0, profit: 0 };
         }
-        paymentMethods[method].value += sale.total || 0;
+        paymentMethods[method].value += sale.finalTotal ?? sale.total ?? 0;
         paymentMethods[method].count += 1;
         paymentMethods[method].profit += sale.totalProfit || 0;
       }
@@ -277,7 +278,7 @@ export function Reports() {
           };
         }
         
-        clientSales[clientKey].totalPurchases += sale.total || 0;
+        clientSales[clientKey].totalPurchases += sale.finalTotal ?? sale.total ?? 0;
         clientSales[clientKey].totalProfit += sale.totalProfit || 0;
         clientSales[clientKey].transactionCount += 1;
       }
@@ -312,7 +313,7 @@ export function Reports() {
             salesByDate[dateKey] = { revenue: 0, cost: 0, profit: 0, transactions: 0 };
           }
           
-          salesByDate[dateKey].revenue += sale.total || 0;
+          salesByDate[dateKey].revenue += sale.finalTotal ?? sale.total ?? 0;
           salesByDate[dateKey].cost += sale.totalCost || 0;
           salesByDate[dateKey].profit += sale.totalProfit || 0;
           salesByDate[dateKey].transactions += 1;
@@ -354,7 +355,7 @@ export function Reports() {
             salesByDate[dateKey] = { revenue: 0, cost: 0, profit: 0, transactions: 0 };
           }
           
-          salesByDate[dateKey].revenue += sale.total || 0;
+          salesByDate[dateKey].revenue += sale.finalTotal ?? sale.total ?? 0;
           salesByDate[dateKey].cost += sale.totalCost || 0;
           salesByDate[dateKey].profit += sale.totalProfit || 0;
           salesByDate[dateKey].transactions += 1;
