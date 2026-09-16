@@ -37,6 +37,15 @@ export function TechnicianLiquidationComponent() {
         ...doc.data()
       })) as Technician[];
       setTechnicians(techniciansData);
+    }, (error) => {
+      // Sin este callback, una lectura denegada se ve igual que "no hay datos".
+      console.error('Error escuchando técnicos:', error);
+      showError(
+        'No se pudieron cargar los técnicos',
+        error.code === 'permission-denied'
+          ? 'La base de datos no permite leer estos datos. Avisa a quien administra el sistema.'
+          : error.message
+      );
     });
     return () => unsubscribe();
   }, []);
@@ -62,6 +71,15 @@ export function TechnicianLiquidationComponent() {
       });
       
       setCompletedServices(servicesData);
+    }, (error) => {
+      // Sin este callback, una lectura denegada se ve igual que "no hay datos".
+      console.error('Error escuchando servicios completados:', error);
+      showError(
+        'No se pudieron cargar los servicios completados',
+        error.code === 'permission-denied'
+          ? 'La base de datos no permite leer estos datos. Avisa a quien administra el sistema.'
+          : error.message
+      );
     });
     return () => unsubscribe();
   }, []);
@@ -75,6 +93,15 @@ export function TechnicianLiquidationComponent() {
         ...doc.data()
       })) as TechnicianLiquidation[];
       setLiquidations(liquidationsData);
+    }, (error) => {
+      // Sin este callback, una lectura denegada se ve igual que "no hay datos".
+      console.error('Error escuchando liquidaciones:', error);
+      showError(
+        'No se pudieron cargar las liquidaciones',
+        error.code === 'permission-denied'
+          ? 'La base de datos no permite leer estos datos. Avisa a quien administra el sistema.'
+          : error.message
+      );
     });
     return () => unsubscribe();
   }, []);

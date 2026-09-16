@@ -5,9 +5,11 @@ import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { Technician } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotification } from '../contexts/NotificationContext';
 
 export function TechnicianManagement() {
   const { user } = useAuth();
+  const { showError } = useNotification();
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingTechnician, setEditingTechnician] = useState<Technician | null>(null);
@@ -25,6 +27,14 @@ export function TechnicianManagement() {
         ...doc.data()
       })) as Technician[];
       setTechnicians(techniciansData);
+    }, (error) => {
+      console.error('Error escuchando técnicos:', error);
+      showError(
+        'No se pudo cargar la lista de técnicos',
+        error.code === 'permission-denied'
+          ? 'La base de datos no permite leer los técnicos. Avisa a quien administra el sistema.'
+          : error.message
+      );
     });
 
     return () => unsubscribe();
@@ -64,8 +74,14 @@ export function TechnicianManagement() {
       }
 
       resetForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving technician:', error);
+      showError(
+        editingTechnician ? 'No se pudo actualizar el técnico' : 'No se pudo crear el técnico',
+        error?.code === 'permission-denied'
+          ? 'La base de datos no permite escribir técnicos. Avisa a quien administra el sistema.'
+          : error?.message || 'Inténtalo de nuevo.'
+      );
     } finally {
       setLoading(false);
     }
@@ -89,8 +105,9 @@ export function TechnicianManagement() {
     try {
       await deleteDoc(doc(db, COLLECTIONS.TECHNICIANS, technicianId));
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting technician:', error);
+      showError('No se pudo eliminar el técnico', error?.message || 'Inténtalo de nuevo.');
     }
   };
 

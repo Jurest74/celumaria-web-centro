@@ -440,6 +440,10 @@ export const productsService = {
           updatedAt: convertTimestamp(doc.data().updatedAt)
         })) as Product[];
         callback(products);
+      },
+      (error) => {
+        // Sin este callback un fallo de lectura se veria como lista vacia.
+        console.error('Error escuchando productos:', error);
       }
     );
   }
@@ -640,6 +644,10 @@ export const salesService = {
           };
         }) as Sale[];
         callback(sales);
+      },
+      (error) => {
+        // Sin este callback un fallo de lectura se veria como lista vacia.
+        console.error('Error escuchando ventas:', error);
       }
     );
   },
@@ -716,6 +724,9 @@ export const salesService = {
       });
 
       callback(sortedSales);
+    }, (error) => {
+      // Sin este callback un fallo de lectura se veria como lista vacia.
+      console.error('Error escuchando ventas del día del vendedor:', error);
     });
   }
 };
@@ -767,6 +778,10 @@ export const customersService = {
           updatedAt: convertTimestamp(doc.data().updatedAt)
         })) as Customer[];
         callback(customers);
+      },
+      (error) => {
+        // Sin este callback un fallo de lectura se veria como lista vacia.
+        console.error('Error escuchando clientes:', error);
       }
     );
   }
@@ -1338,6 +1353,9 @@ export const technicalServicesService = {
         estimatedCompletionDate: convertTimestamp(doc.data().estimatedCompletionDate),
       } as TechnicalService));
       callback(technicalServices);
+    }, (error) => {
+      // Sin este callback un fallo de lectura se veria como lista vacia.
+      console.error('Error escuchando servicios técnicos:', error);
     });
   },
 
@@ -1372,6 +1390,9 @@ export const technicalServicesService = {
       
       console.log(`🔄 Servicios técnicos actualizados (${status}): ${technicalServices.length}`);
       callback(technicalServices);
+    }, (error) => {
+      // Sin este callback un fallo de lectura se veria como lista vacia.
+      console.error('Error escuchando servicios técnicos:', error);
     });
   }
 };
@@ -1601,6 +1622,9 @@ export const purchasesService = {
         ...doc.data()
       } as Purchase));
       callback(purchases);
+    }, (error) => {
+      // Sin este callback un fallo de lectura se veria como lista vacia.
+      console.error('Error escuchando compras:', error);
     });
   }
 };
