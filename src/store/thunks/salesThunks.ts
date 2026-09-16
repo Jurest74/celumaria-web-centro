@@ -1,29 +1,17 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import { addSale as addFirebaseSale, updateSale as updateFirebaseSale, deleteSale as deleteFirebaseSale, updateProductStock as updateFirebaseProductStock } from '../slices/firebaseSlice';
+import { doc, writeBatch, increment } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+import { COLLECTIONS } from '../../services/firebase/collections';
+import { updateSale as updateFirebaseSale, deleteSale as deleteFirebaseSale, updateProductStock as updateFirebaseProductStock } from '../slices/firebaseSlice';
 import { Sale, SaleItem } from '../../types';
 import { salesCalculations } from '../../utils/calculations';
-import { salesService, productsService } from '../../services/firebase/firestore';
+import { salesService } from '../../services/firebase/firestore';
+import { getColombiaTimestamp } from '../../utils/dateUtils';
 
-export const processSale = createAsyncThunk(
-  'sales/processSale',
-  async (
-    saleData: Omit<Sale, 'id' | 'createdAt'>,
-    { dispatch }
-  ) => {
-    // Add the sale
-    dispatch(addFirebaseSale(saleData));
-    
-    // Update product stock for each item
-    saleData.items.forEach(item => {
-      dispatch(updateFirebaseProductStock({
-        productId: item.productId,
-        quantityChange: -item.quantity
-      }));
-    });
-
-    return saleData;
-  }
-);
+// NOTA: El thunk antiguo `processSale` fue retirado.
+// Sólo despachaba reducers en memoria (addFirebaseSale + updateProductStock)
+// sin persistir en Firestore. Las ventas reales se crean directamente con
+// `salesService.add(...)` desde Sales.tsx, Layaway.tsx y TechnicalService.tsx.
 
 export const processProductReturn = createAsyncThunk(
   'sales/processProductReturn',
@@ -87,17 +75,24 @@ export const processProductReturn = createAsyncThunk(
       profitMargin: recalculatedSale.profitMargin
     };
 
-    // Actualizar en Firebase primero
-    await salesService.update(saleId, updatedSaleData);
-    
-    // Actualizar stock del producto en Firebase
-    const currentProduct = state.firebase.products.items.find((p: any) => p.id === productId);
-    if (currentProduct) {
-      await productsService.update(productId, {
-        stock: currentProduct.stock + returnQuantity
-      });
-    }
-    
+    // Actualización atómica en Firestore: ambas operaciones en un mismo batch.
+    // Se usa increment() para que el stock no dependa del valor en Redux
+    // (que puede estar desactualizado y producir un set absoluto erróneo).
+    const batch = writeBatch(db);
+    const saleRef = doc(db, COLLECTIONS.SALES, saleId);
+    const productRef = doc(db, COLLECTIONS.PRODUCTS, productId);
+
+    batch.update(saleRef, {
+      ...updatedSaleData,
+      updatedAt: getColombiaTimestamp()
+    });
+    batch.update(productRef, {
+      stock: increment(returnQuantity),
+      updatedAt: getColombiaTimestamp()
+    });
+
+    await batch.commit();
+
     // Actualizar el estado local de Redux
     dispatch(updateFirebaseSale({
       id: saleId,
@@ -133,19 +128,36 @@ export const deleteSale = createAsyncThunk(
       throw new Error('Venta no encontrada');
     }
 
-    // Delete from Firebase (this will also restore product stock automatically)
+    // Delete from Firebase (this will also restore product stock automatically
+    // for ventas regulares; las de tipo layaway_*/technical_service_* no tocan stock)
     await salesService.delete(saleId);
-    
+
     // Update local state - remove sale
     dispatch(deleteFirebaseSale(saleId));
-    
-    // Update local product stock for each item
-    sale.items.forEach((item: SaleItem) => {
-      dispatch(updateFirebaseProductStock({
-        productId: item.productId,
-        quantityChange: item.quantity // Add back the sold quantity
-      }));
-    });
+
+    // Sólo refrescar el stock local si la venta efectivamente lo descontó —
+    // esto debe ser simétrico con la lógica de salesService.add/.delete.
+    const affectedStock = !sale.type || sale.type === 'regular';
+    if (affectedStock) {
+      sale.items.forEach((item: SaleItem) => {
+        dispatch(updateFirebaseProductStock({
+          productId: item.productId,
+          quantityChange: item.quantity // Add back the sold quantity
+        }));
+      });
+      // Cortesías de la venta también se restauran en Firestore — reflejarlas en Redux
+      const courtesyItems = (sale as any).courtesyItems;
+      if (Array.isArray(courtesyItems)) {
+        courtesyItems.forEach((c: any) => {
+          if (c.productId) {
+            dispatch(updateFirebaseProductStock({
+              productId: c.productId,
+              quantityChange: c.quantity
+            }));
+          }
+        });
+      }
+    }
 
     return { saleId, deletedSale: sale };
   }

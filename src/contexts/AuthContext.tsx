@@ -4,6 +4,7 @@ import { AppUser, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS, createPermissionHelpers } from '../utils/permissions';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { bogotaDateKey } from '../utils/dateUtils';
 
 interface AuthContextType {
   user: User | null;
@@ -125,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Cierre de sesión diario automático
     const checkSessionDate = async (user: User | null) => {
       if (user) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = bogotaDateKey();
         const lastLoginDate = localStorage.getItem('lastLoginDate');
         // Solo forzar logout si lastLoginDate existe y es diferente a hoy
         if (lastLoginDate && lastLoginDate !== today) {
@@ -167,7 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (user) {
         setUser(user);
         // Guardar la fecha de login en localStorage (formato YYYY-MM-DD)
-        const today = new Date().toISOString().split('T')[0];
+        const today = bogotaDateKey();
         localStorage.setItem('lastLoginDate', today);
         
         // Verificar notificaciones de cumpleaños solo en login genuino

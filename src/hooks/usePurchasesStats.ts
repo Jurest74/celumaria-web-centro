@@ -2,12 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Purchase } from '../types';
-
-// Corrige fechas tipo 'YYYY-MM-DD' para zona local
-function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year, month - 1, day, 0, 0, 0, 0);
-}
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 
 interface UsePurchasesStatsOptions {
   searchTerm?: string;
@@ -51,46 +46,24 @@ export function usePurchasesStats({
       let q = collection(db, 'purchases');
       let constraints: any[] = [];
       
-      // Date filter
-      const today = new Date();
-      let startDate: Date | null = null;
-      let endDate: Date | null = null;
-
+      // Rango en día calendario Colombia (TZ-independiente)
+      let startISO: string | null = null;
+      let endISO: string | null = null;
       switch (dateFilter) {
-        case 'today': {
-          // Rango local: 00:00:00 a 23:59:59 del día actual en zona local
-          startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-          endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-          break;
-        }
-        case 'week':
-          startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case '3months':
-          startDate = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-        case '6months':
-          startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
+        case 'today':    startISO = startOfDayBogota(); endISO = endOfDayBogota(); break;
+        case 'week':     startISO = startOfDayBogota(subtractDaysBogota(7)); endISO = endOfDayBogota(); break;
+        case 'month':    startISO = startOfDayBogota(subtractDaysBogota(30)); endISO = endOfDayBogota(); break;
+        case '3months':  startISO = startOfDayBogota(subtractDaysBogota(90)); endISO = endOfDayBogota(); break;
+        case '6months':  startISO = startOfDayBogota(subtractDaysBogota(180)); endISO = endOfDayBogota(); break;
+        case 'year':     startISO = startOfDayBogota(subtractDaysBogota(365)); endISO = endOfDayBogota(); break;
         case 'custom':
-          if (customDateRange.startDate) {
-            startDate = parseLocalDate(customDateRange.startDate);
-          }
-          if (customDateRange.endDate) {
-            endDate = parseLocalDate(customDateRange.endDate);
-            endDate.setHours(23, 59, 59, 999);
-          }
+          if (customDateRange.startDate) startISO = startOfDayBogota(customDateRange.startDate);
+          if (customDateRange.endDate)   endISO   = endOfDayBogota(customDateRange.endDate);
           break;
       }
 
-      if (startDate) constraints.push(where('createdAt', '>=', startDate.toISOString()));
-      if (endDate) constraints.push(where('createdAt', '<=', endDate.toISOString()));
+      if (startISO) constraints.push(where('createdAt', '>=', startISO));
+      if (endISO)   constraints.push(where('createdAt', '<=', endISO));
 
       // Build query
       const finalQuery = constraints.length > 0 ? query(q, ...constraints) : q;

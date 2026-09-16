@@ -631,7 +631,8 @@ export function MyDailySales() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {new Date(sale.createdAt).toLocaleTimeString('es-CO', {
                         hour: '2-digit',
-                        minute: '2-digit'
+                        minute: '2-digit',
+                        timeZone: 'America/Bogota'
                       })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

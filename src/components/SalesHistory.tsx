@@ -19,6 +19,7 @@ import { useFirebase } from '../contexts/FirebaseContext';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { AppUser } from '../types';
+import { bogotaDateKey, BOGOTA_TIME_ZONE } from '../utils/dateUtils';
 import {
   History,
   Search,
@@ -285,11 +286,11 @@ export function SalesHistory() {
         if (field === 'endDate') {
           const maxStartDate = new Date(endDate);
           maxStartDate.setFullYear(maxStartDate.getFullYear() - 1);
-          newRange.startDate = maxStartDate.toISOString().split('T')[0];
+          newRange.startDate = bogotaDateKey(maxStartDate);
         } else {
           const maxEndDate = new Date(startDate);
           maxEndDate.setFullYear(maxEndDate.getFullYear() + 1);
-          newRange.endDate = maxEndDate.toISOString().split('T')[0];
+          newRange.endDate = bogotaDateKey(maxEndDate);
         }
       }
     }
@@ -464,10 +465,12 @@ export function SalesHistory() {
     }
   };
 
-  // Corrige fechas tipo 'YYYY-MM-DD' para zona local
+  // Interpreta 'YYYY-MM-DD' como día calendario Colombia.
+  // Devuelve un Date apuntando al mediodía Bogotá de ese día (instante UTC bien
+  // definido), de forma que toLocaleDateString con timeZone:'America/Bogota'
+  // siempre rinda el día correcto sin importar la TZ del navegador.
   function parseLocalDate(dateStr: string): Date {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    return new Date(year, month - 1, day, 0, 0, 0, 0);
+    return new Date(`${dateStr}T12:00:00.000-05:00`);
   }
   const getDateRangeText = () => {
     if (dateFilter === 'custom' && (customDateRange.startDate || customDateRange.endDate)) {
@@ -586,7 +589,7 @@ export function SalesHistory() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `historial-ventas-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `historial-ventas-${bogotaDateKey()}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -992,7 +995,7 @@ export function SalesHistory() {
                       type="date"
                       value={customDateRange.startDate}
                       onChange={(e) => handleCustomDateChange('startDate', e.target.value)}
-                      max={customDateRange.endDate || new Date().toISOString().split('T')[0]}
+                      max={customDateRange.endDate || bogotaDateKey()}
                       className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       title="Fecha de inicio (máximo 1 año de rango)"
                     />
@@ -1006,7 +1009,7 @@ export function SalesHistory() {
                       value={customDateRange.endDate}
                       onChange={(e) => handleCustomDateChange('endDate', e.target.value)}
                       min={customDateRange.startDate}
-                      max={new Date().toISOString().split('T')[0]}
+                      max={bogotaDateKey()}
                       className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       title="Fecha de fin (máximo 1 año de rango)"
                     />
@@ -1481,7 +1484,7 @@ export function SalesHistory() {
                           <p className="font-medium">{
                             (() => {
                               const dateObj = getValidDate(selectedSale.createdAt);
-                              return dateObj ? dateObj.toLocaleString() : '-';
+                              return dateObj ? dateObj.toLocaleString('es-CO', { timeZone: BOGOTA_TIME_ZONE }) : '-';
                             })()
                           }</p>
                         </div>
@@ -2339,7 +2342,7 @@ export function SalesHistory() {
                           type="date"
                           value={customDateRange.startDate}
                           onChange={(e) => handleCustomDateChange('startDate', e.target.value)}
-                          max={customDateRange.endDate || new Date().toISOString().split('T')[0]}
+                          max={customDateRange.endDate || bogotaDateKey()}
                           className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           title="Fecha de inicio (máximo 1 año de rango)"
                         />
@@ -2353,7 +2356,7 @@ export function SalesHistory() {
                           value={customDateRange.endDate}
                           onChange={(e) => handleCustomDateChange('endDate', e.target.value)}
                           min={customDateRange.startDate}
-                          max={new Date().toISOString().split('T')[0]}
+                          max={bogotaDateKey()}
                           className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           title="Fecha de fin (máximo 1 año de rango)"
                         />

@@ -181,7 +181,7 @@ export function InvoiceModal({ sale, onClose }: { sale: any; onClose: () => void
           <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }}></div>
           
           <h2 className="font-bold mb-2 center" style={{ fontSize: '16px', margin: '8px 0' }}>Cuenta de Cobro</h2>
-          <div className="text-xs text-gray-600 mb-3" style={{ marginBottom: '4px', fontSize: '11px', textAlign: 'left' }}>Fecha: {new Date().toLocaleString()}</div>
+          <div className="text-xs text-gray-600 mb-3" style={{ marginBottom: '4px', fontSize: '11px', textAlign: 'left' }}>Fecha: {new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</div>
           {/* Mostrar nombre del cliente si está seleccionado */}
           {sale.customerName && (
             <div className="text-xs text-gray-900 mb-2" style={{ marginBottom: '2px', fontWeight: '500', fontSize: '11px', textAlign: 'left' }}>Cliente: {sale.customerName}</div>

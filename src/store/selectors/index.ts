@@ -1,6 +1,7 @@
 import { createSelector } from '@reduxjs/toolkit';
 import { RootState } from '../index';
 import { DashboardStats } from '../../types';
+import { bogotaDateKey } from '../../utils/dateUtils';
 
 // Firebase selectors
 export const selectProducts = (state: RootState) => state.firebase.products.items;
@@ -50,10 +51,9 @@ export const selectActiveLayaways = createSelector(
 export const selectTodaysSales = createSelector(
   [selectSales],
   (sales) => {
-    const today = new Date().toDateString();
-    return sales.filter(sale => 
-      new Date(sale.createdAt).toDateString() === today
-    );
+    // Día calendario Colombia, no del navegador
+    const todayKey = bogotaDateKey();
+    return sales.filter(sale => bogotaDateKey(new Date(sale.createdAt)) === todayKey);
   }
 );
 

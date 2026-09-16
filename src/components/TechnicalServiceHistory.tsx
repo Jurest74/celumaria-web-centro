@@ -33,6 +33,55 @@ import { selectTechnicalServices, selectCustomers } from '../store/selectors';
 import { TechnicalService, Customer } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useSectionRealtime } from '../hooks/useOnDemandData';
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
+
+const BOGOTA_OFFSET = '-05:00';
+
+// Calcula rango ISO UTC ([startISO, endISO]) para un filtro nombrado, en día calendario Colombia.
+// Devuelve null si custom no tiene ambas fechas.
+function bogotaRangeISO(
+  dateFilter: string,
+  customDateRange: { startDate: string; endDate: string }
+): { startISO: string; endISO: string } | null {
+  const todayKey = bogotaDateKey();
+  const [tY, tM] = todayKey.split('-').map(Number);
+  switch (dateFilter) {
+    case 'today':
+      return { startISO: startOfDayBogota(todayKey), endISO: endOfDayBogota(todayKey) };
+    case 'yesterday': {
+      const k = subtractDaysBogota(1);
+      return { startISO: startOfDayBogota(k), endISO: endOfDayBogota(k) };
+    }
+    case 'thisWeek': {
+      // Día de la semana en Bogotá (mediodía Bogotá → mismo día UTC, getUTCDay seguro)
+      const dow = new Date(`${todayKey}T12:00:00.000${BOGOTA_OFFSET}`).getUTCDay();
+      return { startISO: startOfDayBogota(subtractDaysBogota(dow)), endISO: endOfDayBogota(todayKey) };
+    }
+    case 'thisMonth': {
+      const startKey = `${todayKey.slice(0, 7)}-01`;
+      return { startISO: startOfDayBogota(startKey), endISO: endOfDayBogota(todayKey) };
+    }
+    case 'lastMonth': {
+      const lastY = tM === 1 ? tY - 1 : tY;
+      const lastM = tM === 1 ? 12 : tM - 1;
+      const lastMKey = `${lastY}-${String(lastM).padStart(2, '0')}-01`;
+      // Último día del mes pasado: día 0 del mes actual (UTC)
+      const daysInLast = new Date(Date.UTC(tY, tM - 1, 0)).getUTCDate();
+      const lastDayKey = `${lastY}-${String(lastM).padStart(2, '0')}-${String(daysInLast).padStart(2, '0')}`;
+      return { startISO: startOfDayBogota(lastMKey), endISO: endOfDayBogota(lastDayKey) };
+    }
+    case 'custom':
+      if (customDateRange.startDate && customDateRange.endDate) {
+        return {
+          startISO: startOfDayBogota(customDateRange.startDate),
+          endISO: endOfDayBogota(customDateRange.endDate),
+        };
+      }
+      return null;
+    default:
+      return null;
+  }
+}
 
 // Utilidad para convertir cualquier valor de fecha Firestore/JS a Date válido
 function getValidDate(date: any): Date | null {
@@ -42,10 +91,9 @@ function getValidDate(date: any): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Función auxiliar para parsear fechas localmente sin conversión de zona horaria
+// Interpreta 'YYYY-MM-DD' como mediodía día calendario Colombia (instante UTC absoluto)
 function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year, month - 1, day, 0, 0, 0, 0);
+  return new Date(`${dateStr}T12:00:00.000${BOGOTA_OFFSET}`);
 }
 
 export function TechnicalServiceHistory() {
@@ -66,57 +114,22 @@ export function TechnicalServiceHistory() {
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [dateError, setDateError] = useState('');
   
-  // Función para obtener el rango de fechas actual
+  // Función para obtener el rango de fechas actual (siempre en día Bogotá)
   const getCurrentDateRange = () => {
-    const today = new Date();
-    let startDate: Date, endDate: Date;
-    
-    switch (dateFilter) {
-      case 'today':
-        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'yesterday':
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        startDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
-        endDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
-        break;
-      case 'thisWeek':
-        startDate = new Date(today);
-        startDate.setDate(today.getDate() - today.getDay());
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'thisMonth':
-        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'lastMonth':
-        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        endDate = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59);
-        break;
-      case 'custom':
-        if (customDateRange.startDate && customDateRange.endDate) {
-          startDate = parseLocalDate(customDateRange.startDate);
-          endDate = parseLocalDate(customDateRange.endDate);
-          endDate.setHours(23, 59, 59);
-        } else {
-          return null; // No hay rango válido
-        }
-        break;
-      default:
-        return null;
-    }
-    
+    const range = bogotaRangeISO(dateFilter, customDateRange);
+    if (!range) return null;
+    const startDate = new Date(range.startISO);
+    const endDate = new Date(range.endISO);
     return {
       startDate,
       endDate,
-      startDateFormatted: startDate.toLocaleDateString('es-ES', { 
-        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' 
+      startDateFormatted: startDate.toLocaleDateString('es-ES', {
+        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+        timeZone: 'America/Bogota'
       }),
-      endDateFormatted: endDate.toLocaleDateString('es-ES', { 
-        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' 
+      endDateFormatted: endDate.toLocaleDateString('es-ES', {
+        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+        timeZone: 'America/Bogota'
       })
     };
   };
@@ -196,48 +209,12 @@ export function TechnicalServiceHistory() {
     setExpandedServices(newExpanded);
   };
 
-  // Función para obtener pagos en el rango de fechas seleccionado
+  // Función para obtener pagos en el rango de fechas seleccionado (Bogotá)
   const getPaymentsInDateRange = () => {
-    const today = new Date();
-    let startDate: Date, endDate: Date;
-
-    switch (dateFilter) {
-      case 'today':
-        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'yesterday':
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        startDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
-        endDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
-        break;
-      case 'thisWeek':
-        startDate = new Date(today);
-        startDate.setDate(today.getDate() - today.getDay());
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'thisMonth':
-        startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-        break;
-      case 'lastMonth':
-        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        endDate = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59);
-        break;
-      case 'custom':
-        if (customDateRange.startDate && customDateRange.endDate) {
-          startDate = parseLocalDate(customDateRange.startDate);
-          endDate = parseLocalDate(customDateRange.endDate);
-          endDate.setHours(23, 59, 59);
-        } else {
-          return []; // No mostrar pagos hasta que ambas fechas estén seleccionadas
-        }
-        break;
-      default:
-        return [];
-    }
+    const range = bogotaRangeISO(dateFilter, customDateRange);
+    if (!range) return [];
+    const startDate = new Date(range.startISO);
+    const endDate = new Date(range.endISO);
 
     const paymentsInRange: Array<{
       id: string;
@@ -342,42 +319,18 @@ export function TechnicalServiceHistory() {
       
       if (!serviceDate) return false;
 
-      const today = new Date();
-      const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+      // Para filtros sin fecha (default), aceptar todo
+      if (dateFilter === 'all' || !dateFilter) return true;
 
-      switch (dateFilter) {
-        case 'today':
-          return serviceDate >= startOfToday && serviceDate <= endOfToday;
-        case 'yesterday':
-          const yesterday = new Date(today);
-          yesterday.setDate(yesterday.getDate() - 1);
-          const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
-          const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
-          return serviceDate >= startOfYesterday && serviceDate <= endOfYesterday;
-        case 'thisWeek':
-          const startOfWeek = new Date(today);
-          startOfWeek.setDate(today.getDate() - today.getDay());
-          startOfWeek.setHours(0, 0, 0, 0);
-          return serviceDate >= startOfWeek;
-        case 'thisMonth':
-          const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-          return serviceDate >= startOfMonth;
-        case 'lastMonth':
-          const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-          const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59);
-          return serviceDate >= startOfLastMonth && serviceDate <= endOfLastMonth;
-        case 'custom':
-          if (customDateRange.startDate && customDateRange.endDate) {
-            const startDate = parseLocalDate(customDateRange.startDate);
-            const endDate = parseLocalDate(customDateRange.endDate);
-            endDate.setHours(23, 59, 59);
-            return serviceDate >= startDate && serviceDate <= endDate;
-          }
-          return false; // No mostrar resultados hasta que ambas fechas estén seleccionadas
-        default:
-          return true;
+      const range = bogotaRangeISO(dateFilter, customDateRange);
+      if (!range) {
+        // 'custom' sin ambas fechas: no mostrar resultados
+        return dateFilter !== 'custom' && dateFilter !== 'today' &&
+               dateFilter !== 'yesterday' && dateFilter !== 'thisWeek' &&
+               dateFilter !== 'thisMonth' && dateFilter !== 'lastMonth';
       }
+      const sIso = serviceDate.toISOString();
+      return sIso >= range.startISO && sIso <= range.endISO;
     });
 
     // Ordenamiento
@@ -770,25 +723,17 @@ export function TechnicalServiceHistory() {
                         type="date"
                         value={customDateRange.startDate}
                         onChange={(e) => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          const selectedDate = new Date(e.target.value);
-                          
-                          if (selectedDate < sixMonthsAgo) {
+                          const minKey = subtractDaysBogota(180);
+                          if (e.target.value < minKey) {
                             setDateError('La fecha inicial no puede ser mayor a 6 meses atrás');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
                           setDateError('');
                           setCustomDateRange({...customDateRange, startDate: e.target.value});
                         }}
-                        min={(() => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          return sixMonthsAgo.toISOString().split('T')[0];
-                        })()}
-                        max={new Date().toISOString().split('T')[0]}
+                        min={subtractDaysBogota(180)}
+                        max={bogotaDateKey()}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -800,32 +745,22 @@ export function TechnicalServiceHistory() {
                         type="date"
                         value={customDateRange.endDate}
                         onChange={(e) => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          const selectedDate = new Date(e.target.value);
-                          const startDate = customDateRange.startDate ? new Date(customDateRange.startDate) : null;
-                          
-                          if (selectedDate < sixMonthsAgo) {
+                          const minKey = subtractDaysBogota(180);
+                          if (e.target.value < minKey) {
                             setDateError('La fecha final no puede ser mayor a 6 meses atrás');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
-                          if (startDate && selectedDate < startDate) {
+                          if (customDateRange.startDate && e.target.value < customDateRange.startDate) {
                             setDateError('La fecha final no puede ser anterior a la fecha inicial');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
                           setDateError('');
                           setCustomDateRange({...customDateRange, endDate: e.target.value});
                         }}
-                        min={customDateRange.startDate || (() => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          return sixMonthsAgo.toISOString().split('T')[0];
-                        })()}
-                        max={new Date().toISOString().split('T')[0]}
+                        min={customDateRange.startDate || subtractDaysBogota(180)}
+                        max={bogotaDateKey()}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -1182,25 +1117,17 @@ export function TechnicalServiceHistory() {
                         type="date"
                         value={customDateRange.startDate}
                         onChange={(e) => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          const selectedDate = new Date(e.target.value);
-                          
-                          if (selectedDate < sixMonthsAgo) {
+                          const minKey = subtractDaysBogota(180);
+                          if (e.target.value < minKey) {
                             setDateError('La fecha inicial no puede ser mayor a 6 meses atrás');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
                           setDateError('');
                           setCustomDateRange({...customDateRange, startDate: e.target.value});
                         }}
-                        min={(() => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          return sixMonthsAgo.toISOString().split('T')[0];
-                        })()}
-                        max={new Date().toISOString().split('T')[0]}
+                        min={subtractDaysBogota(180)}
+                        max={bogotaDateKey()}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -1212,32 +1139,22 @@ export function TechnicalServiceHistory() {
                         type="date"
                         value={customDateRange.endDate}
                         onChange={(e) => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          const selectedDate = new Date(e.target.value);
-                          const startDate = customDateRange.startDate ? new Date(customDateRange.startDate) : null;
-                          
-                          if (selectedDate < sixMonthsAgo) {
+                          const minKey = subtractDaysBogota(180);
+                          if (e.target.value < minKey) {
                             setDateError('La fecha final no puede ser mayor a 6 meses atrás');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
-                          if (startDate && selectedDate < startDate) {
+                          if (customDateRange.startDate && e.target.value < customDateRange.startDate) {
                             setDateError('La fecha final no puede ser anterior a la fecha inicial');
                             setTimeout(() => setDateError(''), 3000);
                             return;
                           }
-                          
                           setDateError('');
                           setCustomDateRange({...customDateRange, endDate: e.target.value});
                         }}
-                        min={customDateRange.startDate || (() => {
-                          const today = new Date();
-                          const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-                          return sixMonthsAgo.toISOString().split('T')[0];
-                        })()}
-                        max={new Date().toISOString().split('T')[0]}
+                        min={customDateRange.startDate || subtractDaysBogota(180)}
+                        max={bogotaDateKey()}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>

@@ -2,6 +2,7 @@
 // Todos estos cálculos son GRATIS - no consumen cuota Firebase
 
 import type { Product, Sale, LayawayPlan, DashboardStats } from '../types';
+import { bogotaDateKey } from './dateUtils';
 
 // ✅ Cálculos de productos (instantáneos)
 export const productCalculations = {
@@ -79,12 +80,10 @@ export const salesCalculations = {
     };
   },
 
-  // Ventas de hoy
+  // Ventas de hoy (día calendario Colombia, no del navegador)
   getTodaysSales(sales: Sale[]): Sale[] {
-    const today = new Date().toDateString();
-    return sales.filter(sale =>
-      new Date(sale.createdAt).toDateString() === today
-    );
+    const todayKey = bogotaDateKey(new Date());
+    return sales.filter(sale => bogotaDateKey(new Date(sale.createdAt)) === todayKey);
   },
 
   // Calcular ventas del día segregadas por tipo (para cuadre de caja)

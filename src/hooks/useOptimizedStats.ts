@@ -3,6 +3,7 @@ import { useAppSelector } from './useAppSelector';
 import { selectProducts } from '../store/selectors';
 import type { DashboardStats } from '../types';
 import calculations from '../utils/calculations';
+import { bogotaDateKey } from '../utils/dateUtils';
 
 // 🎯 Hook optimizado que NO carga todo
 export function useOptimizedDashboardStats(): DashboardStats | null {
@@ -26,9 +27,9 @@ export function useOptimizedDashboardStats(): DashboardStats | null {
     }
 
     // Calcular solo con datos necesarios
-    const today = new Date().toDateString();
-    const todaysSales = recentSales.filter(sale => 
-      new Date(sale.createdAt).toDateString() === today
+    const todayKey = bogotaDateKey();
+    const todaysSales = recentSales.filter(sale =>
+      bogotaDateKey(new Date(sale.createdAt)) === todayKey
     );
 
     // Usar totalProfit directamente de las ventas (ya calculado correctamente)

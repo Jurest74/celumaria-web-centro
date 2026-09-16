@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Purchase, PurchaseReturnItem } from '../types';
 import { formatCurrency, formatNumber, formatCurrencyForExport } from '../utils/currency';
+import { bogotaDateKey } from '../utils/dateUtils';
 
 export function PurchasesHistory() {
   // Filtros y estado UI
@@ -138,15 +139,15 @@ export function PurchasesHistory() {
       const diffInDays = diffInTime / (1000 * 3600 * 24);
       
       if (diffInDays > 365) {
-        // Si el rango es mayor a 1 año, ajustar la fecha de inicio
+        // Si el rango es mayor a 1 año, ajustar la fecha de inicio (en día Colombia)
         if (field === 'endDate') {
           const maxStartDate = new Date(endDate);
           maxStartDate.setFullYear(maxStartDate.getFullYear() - 1);
-          newRange.startDate = maxStartDate.toISOString().split('T')[0];
+          newRange.startDate = bogotaDateKey(maxStartDate);
         } else {
           const maxEndDate = new Date(startDate);
           maxEndDate.setFullYear(maxEndDate.getFullYear() + 1);
-          newRange.endDate = maxEndDate.toISOString().split('T')[0];
+          newRange.endDate = bogotaDateKey(maxEndDate);
         }
       }
     }
@@ -196,7 +197,7 @@ export function PurchasesHistory() {
     if (link.download !== undefined) {
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', `historial-compras-${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', `historial-compras-${bogotaDateKey()}.csv`);
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
@@ -512,7 +513,7 @@ export function PurchasesHistory() {
                   type="date"
                   value={customDateRange.startDate}
                   onChange={(e) => handleCustomDateChange('startDate', e.target.value)}
-                  max={customDateRange.endDate || new Date().toISOString().split('T')[0]}
+                  max={customDateRange.endDate || bogotaDateKey()}
                   className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   title="Fecha de inicio (máximo 1 año de rango)"
                 />
@@ -524,7 +525,7 @@ export function PurchasesHistory() {
                   value={customDateRange.endDate}
                   onChange={(e) => handleCustomDateChange('endDate', e.target.value)}
                   min={customDateRange.startDate}
-                  max={new Date().toISOString().split('T')[0]}
+                  max={bogotaDateKey()}
                   className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   title="Fecha de fin (máximo 1 año de rango)"
                 />
@@ -890,7 +891,7 @@ export function PurchasesHistory() {
                     <div className="flex justify-between">
                       <span className="text-gray-600">Fecha:</span>
                       <span className="font-medium">
-                        {getValidDate(selectedPurchase.createdAt)?.toLocaleString() || 'Fecha inválida'}
+                        {getValidDate(selectedPurchase.createdAt)?.toLocaleString('es-CO', { timeZone: 'America/Bogota' }) || 'Fecha inválida'}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1004,7 +1005,7 @@ export function PurchasesHistory() {
                               Devolución #{index + 1}
                             </span>
                             <span className="text-xs text-red-600 ml-2">
-                              {new Date(returnRecord.createdAt).toLocaleString()}
+                              {new Date(returnRecord.createdAt).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
                             </span>
                           </div>
                           <span className="text-sm font-medium text-red-800">

@@ -3,6 +3,7 @@ import { Gift, Calendar, User, Package, DollarSign, Search, Filter, TrendingDown
 import { courtesiesService } from '../services/firebase/firestore';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
+import { bogotaDateKey } from '../utils/dateUtils';
 
 export function Courtesies() {
   const { permissionHelpers } = useAuth();
@@ -77,9 +78,9 @@ export function Courtesies() {
         return false;
       }
 
-      // Filtro por rango de fechas
+      // Filtro por rango de fechas (día calendario Colombia)
       if (startDate || endDate) {
-        const courtesyDate = new Date(courtesy.createdAt).toISOString().split('T')[0];
+        const courtesyDate = bogotaDateKey(new Date(courtesy.createdAt));
         if (startDate && courtesyDate < startDate) return false;
         if (endDate && courtesyDate > endDate) return false;
       }

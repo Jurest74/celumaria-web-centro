@@ -31,12 +31,13 @@ import { Customer } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
 import { useCustomerSalesStats } from '../hooks/useCustomerSalesStats';
-import { 
-  isBirthdayToday, 
-  isUpcomingBirthday, 
-  calculateAge, 
-  formatDisplayDate, 
-  formatInputDate 
+import {
+  isBirthdayToday,
+  isUpcomingBirthday,
+  calculateAge,
+  formatDisplayDate,
+  formatInputDate,
+  bogotaDateKey,
 } from '../utils/dateUtils';
 import { 
   validateCustomerData, 
@@ -282,7 +283,8 @@ export function Customers() {
       return date.toLocaleDateString('es-ES', {
         year: 'numeric',
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
+        timeZone: 'America/Bogota'
       });
     } catch (error) {
       return 'Sin fecha';
@@ -537,7 +539,7 @@ export function Customers() {
                 type="date"
                 name="birthDate"
                 defaultValue={editingCustomer?.birthDate ? formatInputDate(editingCustomer.birthDate) : ''}
-                max={new Date().toISOString().split('T')[0]}
+                max={bogotaDateKey()}
                 disabled={isLoading}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
               />

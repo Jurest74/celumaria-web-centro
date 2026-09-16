@@ -1968,7 +1968,7 @@ export function TechnicalService() {
           <div class="separator"></div>
           
           <h2 class="center" style="font-size: 16px; margin: 8px 0; font-weight: bold;">Remisión Cliente</h2>
-          <div class="center" style="font-size: 15px; margin-bottom: 8px;">Fecha de impresión: ${new Date().toLocaleString()}</div>
+          <div class="center" style="font-size: 15px; margin-bottom: 8px;">Fecha de impresión: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</div>
           
           <div class="separator"></div>
           

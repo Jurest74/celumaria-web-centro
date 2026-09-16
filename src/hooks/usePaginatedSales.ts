@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, orderBy, limit, startAfter, getDocs, getDocsFromServer } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Sale } from '../types';
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 
 interface UsePaginatedSalesOptions {
   searchTerm?: string;
@@ -47,73 +48,29 @@ export function usePaginatedSales({
     let q = collection(db, 'sales');
     let constraints: any[] = [];
 
-    // Date filter
-    const today = new Date();
-    let startDate: Date | null = null;
-    let endDate: Date | null = null;
-    switch (dateFilter) {
-      case 'today': {
-        // Crear el rango del día actual en hora LOCAL
-        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-
-        console.log('📅 Filtro TODAY:', {
-          start: startDate.toISOString(),
-          end: endDate.toISOString()
-        });
-        break;
-      }
-      case 'week':
-        startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '3months':
-        startDate = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case '6months':
-        startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        startDate = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
-      case 'custom':
-        // Only execute query if both dates are selected
-        if (customDateRange.startDate && customDateRange.endDate) {
-          // Parse date in local timezone to avoid timezone issues
-          const [yearStart, monthStart, dayStart] = customDateRange.startDate.split('-').map(Number);
-          const [yearEnd, monthEnd, dayEnd] = customDateRange.endDate.split('-').map(Number);
-          
-          // Default full day range
-          startDate = new Date(yearStart, monthStart - 1, dayStart, 0, 0, 0, 0);
-          endDate = new Date(yearEnd, monthEnd - 1, dayEnd, 23, 59, 59, 999);
-        } else {
-          // Return early if both dates are not selected - no query should be executed
-          return null;
-        }
-        break;
+    // Date filter — siempre calculado en día calendario Colombia
+    // (independiente de la TZ del navegador). Devuelve ISO UTC.
+    const startDateISO = computeStartISO(dateFilter, customDateRange);
+    const endDateISO   = computeEndISO(dateFilter, customDateRange);
+    if (dateFilter === 'custom' && (!startDateISO || !endDateISO)) {
+      // Custom requiere ambas fechas
+      return null;
     }
 
-    // Apply time filtering to any date range if timeRange is provided
-    if (timeRange.startTime && timeRange.endTime && startDate && endDate) {
-      const [startHour, startMinute] = timeRange.startTime.split(':').map(Number);
-      const [endHour, endMinute] = timeRange.endTime.split(':').map(Number);
-      
-      // For single day ranges (today), apply time to the same day
-      if (dateFilter === 'today') {
-        startDate.setHours(startHour, startMinute, 0, 0);
-        endDate.setHours(endHour, endMinute, 59, 999);
-      } else {
-        // For multi-day ranges, apply time filtering to the start and end dates
-        startDate.setHours(startHour, startMinute, 0, 0);
-        endDate.setHours(endHour, endMinute, 59, 999);
-      }
+    // Time-of-day refinement: si el usuario filtra por horario, ajustamos
+    // los límites en hora Colombia (no en hora del navegador).
+    let finalStartISO = startDateISO;
+    let finalEndISO   = endDateISO;
+    if (timeRange.startTime && timeRange.endTime && finalStartISO && finalEndISO) {
+      finalStartISO = applyTimeOfDayBogota(finalStartISO, timeRange.startTime, 'start');
+      finalEndISO   = applyTimeOfDayBogota(finalEndISO,   timeRange.endTime,   'end');
     }
-    // NOTA: Comentamos los filtros de fecha en Firestore porque causan problemas de zona horaria
-    // El filtrado de fechas se hace en el cliente (ver filterSalesClientSide)
-    // if (startDate) constraints.push(where('createdAt', '>=', startDate.toISOString()));
-    // if (endDate) constraints.push(where('createdAt', '<=', endDate.toISOString()));
+
+    // NOTA: Mantenemos los filtros de fecha del lado cliente
+    // (filterSalesClientSide). Las constraints Firestore se podrían reactivar
+    // ahora que los rangos son TZ-independientes, pero requieren índices extra.
+    // if (finalStartISO) constraints.push(where('createdAt', '>=', finalStartISO));
+    // if (finalEndISO)   constraints.push(where('createdAt', '<=', finalEndISO));
 
     // Payment method filter
     // NOTA: No aplicar filtro de método de pago en Firestore porque ahora usamos paymentMethods (array)
@@ -155,49 +112,21 @@ export function usePaginatedSales({
 
   // Helper to filter sales on client side (for complex filters)
   const filterSalesClientSide = useCallback((salesList: Sale[]) => {
-    // Calcular el rango de fechas para filtrado en cliente
-    const today = new Date();
-    let startDate: Date | null = null;
-    let endDate: Date | null = null;
-
-    switch (dateFilter) {
-      case 'today':
-        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        break;
-      case 'week':
-        startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '3months':
-        startDate = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case '6months':
-        startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        startDate = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
-      case 'custom':
-        if (customDateRange.startDate && customDateRange.endDate) {
-          const [yearStart, monthStart, dayStart] = customDateRange.startDate.split('-').map(Number);
-          const [yearEnd, monthEnd, dayEnd] = customDateRange.endDate.split('-').map(Number);
-          startDate = new Date(yearStart, monthStart - 1, dayStart, 0, 0, 0, 0);
-          endDate = new Date(yearEnd, monthEnd - 1, dayEnd, 23, 59, 59, 999);
-        }
-        break;
+    // Rango de fechas en día calendario Colombia (TZ-independiente).
+    let startISO = computeStartISO(dateFilter, customDateRange);
+    let endISO   = computeEndISO(dateFilter, customDateRange);
+    if (timeRange.startTime && timeRange.endTime && startISO && endISO) {
+      startISO = applyTimeOfDayBogota(startISO, timeRange.startTime, 'start');
+      endISO   = applyTimeOfDayBogota(endISO,   timeRange.endTime,   'end');
     }
 
-    // DEBUG: Log del filtro de fechas
     if (dateFilter === 'today' && salesList.length > 0) {
-      console.log('🔍 Filtro de fecha CLIENT-SIDE:', {
+      console.log('🔍 Filtro de fecha CLIENT-SIDE (Bogotá):', {
         dateFilter,
-        startDate: startDate?.toISOString(),
-        endDate: endDate?.toISOString(),
+        startISO,
+        endISO,
         totalVentas: salesList.length,
-        primeraVenta: salesList[0]?.createdAt
+        primeraVenta: salesList[0]?.createdAt,
       });
     }
 
@@ -205,42 +134,18 @@ export function usePaginatedSales({
       // Date filter (filtrado en cliente para evitar problemas de zona horaria)
       if (sale.createdAt) {
         // IGNORAR ventas con serverTimestamp sin resolver (están corruptas)
-        if (sale.createdAt._methodName === 'serverTimestamp') {
+        if ((sale.createdAt as any)._methodName === 'serverTimestamp') {
           console.warn('⚠️ Venta con timestamp corrupto, ignorando:', sale.id);
           return false;
         }
 
-        // Convertir a Date, soportando tanto Timestamp de Firestore como ISO string
-        let saleDate: Date;
-        if (typeof sale.createdAt === 'string') {
-          // Formato nuevo: ISO string
-          saleDate = new Date(sale.createdAt);
-        } else if (sale.createdAt.toDate && typeof sale.createdAt.toDate === 'function') {
-          // Formato antiguo: Firestore Timestamp
-          saleDate = sale.createdAt.toDate();
-        } else if (sale.createdAt.seconds) {
-          // Formato Timestamp serializado
-          saleDate = new Date(sale.createdAt.seconds * 1000);
-        } else {
-          // Fallback
-          saleDate = new Date(sale.createdAt);
-        }
+        // Normalizar createdAt → ISO string UTC (soporta string ISO,
+        // Firestore Timestamp y Timestamp serializado)
+        const saleISO = normalizeCreatedAtToISO(sale.createdAt);
+        if (!saleISO) return false;
 
-        // DEBUG: Log de comparación para las primeras ventas
-        if (dateFilter === 'today' && salesList.indexOf(sale) < 3) {
-          console.log(`🔍 Venta ${sale.id}:`, {
-            createdAt: sale.createdAt,
-            createdAtType: typeof sale.createdAt,
-            saleDate: saleDate.toISOString(),
-            startDate: startDate?.toISOString(),
-            endDate: endDate?.toISOString(),
-            pasaInicio: !startDate || saleDate >= startDate,
-            pasaFin: !endDate || saleDate <= endDate
-          });
-        }
-
-        if (startDate && saleDate < startDate) return false;
-        if (endDate && saleDate > endDate) return false;
+        if (startISO && saleISO < startISO) return false;
+        if (endISO && saleISO > endISO) return false;
       }
 
       // Search term filter (product names, sale ID, customer name)
@@ -460,4 +365,78 @@ export function usePaginatedSales({
     },
     refetch: () => fetchSales(currentPage),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Helpers de rango de fechas — siempre día calendario Colombia (UTC-5)
+// ─────────────────────────────────────────────────────────────────────────
+
+const BOGOTA_OFFSET = '-05:00';
+
+function computeStartISO(
+  dateFilter: string,
+  customDateRange: { startDate: string; endDate: string }
+): string | null {
+  switch (dateFilter) {
+    case 'today':    return startOfDayBogota();
+    case 'week':     return startOfDayBogota(subtractDaysBogota(7));
+    case 'month':    return startOfDayBogota(subtractDaysBogota(30));
+    case '3months':  return startOfDayBogota(subtractDaysBogota(90));
+    case '6months':  return startOfDayBogota(subtractDaysBogota(180));
+    case 'year':     return startOfDayBogota(subtractDaysBogota(365));
+    case 'custom':
+      return customDateRange.startDate
+        ? startOfDayBogota(customDateRange.startDate)
+        : null;
+    default: return null;
+  }
+}
+
+function computeEndISO(
+  dateFilter: string,
+  customDateRange: { startDate: string; endDate: string }
+): string | null {
+  switch (dateFilter) {
+    case 'today':    return endOfDayBogota();
+    case 'week':
+    case 'month':
+    case '3months':
+    case '6months':
+    case 'year':     return endOfDayBogota(); // hasta hoy inclusive
+    case 'custom':
+      return customDateRange.endDate
+        ? endOfDayBogota(customDateRange.endDate)
+        : null;
+    default: return null;
+  }
+}
+
+/**
+ * Reemplaza la hora del ISO por la hora indicada (HH:mm) interpretada en
+ * hora Bogotá. `kind = 'start'` usa segundos 00, `'end'` usa 59.999.
+ */
+function applyTimeOfDayBogota(iso: string, hhmm: string, kind: 'start' | 'end'): string {
+  // El ISO puede venir como "YYYY-MM-DDTHH:mm:ss.sssZ"; queremos el día Bogotá
+  // de ese instante.
+  const dateKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(iso))
+    .reduce((acc: Record<string,string>, p) => { acc[p.type] = p.value; return acc; }, {});
+  const day = `${dateKey.year}-${dateKey.month}-${dateKey.day}`;
+  const [h, m] = hhmm.split(':').map(Number);
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const tail = kind === 'start' ? `${hh}:${mm}:00.000` : `${hh}:${mm}:59.999`;
+  return new Date(`${day}T${tail}${BOGOTA_OFFSET}`).toISOString();
+}
+
+/** Convierte cualquier formato histórico de createdAt a ISO UTC string. */
+function normalizeCreatedAtToISO(createdAt: any): string | null {
+  if (!createdAt) return null;
+  if (typeof createdAt === 'string') return createdAt;
+  if (typeof createdAt.toDate === 'function') return createdAt.toDate().toISOString();
+  if (typeof createdAt.seconds === 'number') return new Date(createdAt.seconds * 1000).toISOString();
+  const d = new Date(createdAt);
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }

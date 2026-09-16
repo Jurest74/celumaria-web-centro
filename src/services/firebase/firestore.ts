@@ -29,7 +29,7 @@ import type {
   DashboardStats,
   Purchase
 } from '../../types';
-import { getColombiaTimestamp } from '../../utils/dateUtils';
+import { getColombiaTimestamp, bogotaDateKey } from '../../utils/dateUtils';
 
 // Espera confirmación del servidor con timeout de 15 segundos
 function waitForServerConfirmation(): Promise<void> {
@@ -473,24 +473,36 @@ export const salesService = {
     });
     batch.set(saleRef, cleanedSale);
 
-    // Update product stocks for regular items
-    for (const item of sale.items) {
-      const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-      batch.update(productRef, {
-        stock: increment(-item.quantity),
-        updatedAt: getColombiaTimestamp()
-      });
-    }
+    // El stock SOLO se descuenta para ventas regulares.
+    // Las ventas de tipo:
+    //   - 'layaway_payment' / 'layaway_delivery' → el stock ya se descontó al
+    //     crear el plan separe (layawaysService.add)
+    //   - 'technical_service_payment' → el stock ya se descontó al crear el
+    //     servicio (technicalServicesService.add)
+    // Estos registros existen únicamente como histórico contable.
+    const affectsStock = !sale.type || sale.type === 'regular';
 
-    // Update product stocks for courtesy items if they exist
-    if (sale.courtesyItems && Array.isArray(sale.courtesyItems)) {
-      for (const courtesyItem of sale.courtesyItems) {
-        if (courtesyItem.productId) {
-          const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
-          batch.update(productRef, {
-            stock: increment(-courtesyItem.quantity),
-            updatedAt: getColombiaTimestamp()
-          });
+    if (affectsStock) {
+      // Update product stocks for regular items
+      for (const item of sale.items) {
+        if (!item.productId) continue;
+        const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
+        batch.update(productRef, {
+          stock: increment(-item.quantity),
+          updatedAt: getColombiaTimestamp()
+        });
+      }
+
+      // Update product stocks for courtesy items if they exist
+      if (sale.courtesyItems && Array.isArray(sale.courtesyItems)) {
+        for (const courtesyItem of sale.courtesyItems) {
+          if (courtesyItem.productId) {
+            const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
+            batch.update(productRef, {
+              stock: increment(-courtesyItem.quantity),
+              updatedAt: getColombiaTimestamp()
+            });
+          }
         }
       }
     }
@@ -510,35 +522,71 @@ export const salesService = {
 
   async delete(id: string): Promise<void> {
     const saleRef = doc(db, COLLECTIONS.SALES, id);
-    
+
     // Get sale data to restore product stock
     const saleDoc = await getDoc(saleRef);
     if (!saleDoc.exists()) {
       throw new Error('Venta no encontrada');
     }
-    
+
     const saleData = saleDoc.data() as Sale;
     const batch = writeBatch(db);
-    
+
     // Delete sale
     batch.delete(saleRef);
-    
-    // Restore product stocks (only for products that still exist)
-    for (const item of saleData.items) {
-      const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
-      const productDoc = await getDoc(productRef);
-      
-      // Only update stock if product still exists
-      if (productDoc.exists()) {
-        batch.update(productRef, {
-          stock: increment(item.quantity), // Add back the sold quantity
-          updatedAt: getColombiaTimestamp()
-        });
+
+    // Solo restaurar stock si esta venta lo descontó al crearse — debe ser
+    // simétrico a salesService.add. Las ventas tipo layaway_*/technical_service_*
+    // son sólo registros contables y nunca tocaron stock.
+    const affectedStock = !saleData.type || saleData.type === 'regular';
+
+    if (affectedStock) {
+      // Restore product stocks (only for products that still exist)
+      for (const item of saleData.items) {
+        if (!item.productId) continue;
+        const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
+        const productDoc = await getDoc(productRef);
+
+        // Only update stock if product still exists
+        if (productDoc.exists()) {
+          batch.update(productRef, {
+            stock: increment(item.quantity), // Add back the sold quantity
+            updatedAt: getColombiaTimestamp()
+          });
+        }
+        // If product doesn't exist anymore, we skip the stock restoration
+        // This can happen if the product was deleted after the sale was made
       }
-      // If product doesn't exist anymore, we skip the stock restoration
-      // This can happen if the product was deleted after the sale was made
+
+      // Restaurar también stock de cortesías que se descontaron al vender
+      if (saleData.courtesyItems && Array.isArray(saleData.courtesyItems)) {
+        for (const courtesyItem of saleData.courtesyItems) {
+          if (!courtesyItem.productId) continue;
+          const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
+          const productDoc = await getDoc(productRef);
+          if (productDoc.exists()) {
+            batch.update(productRef, {
+              stock: increment(courtesyItem.quantity),
+              updatedAt: getColombiaTimestamp()
+            });
+          }
+        }
+      }
     }
-    
+
+    // Eliminar también los registros en /courtesies asociados a esta venta
+    // para no dejar histórico huérfano. Tolerante a fallo de permisos.
+    try {
+      const courtesyQuery = query(
+        collection(db, COLLECTIONS.COURTESIES),
+        where('saleId', '==', id)
+      );
+      const courtesyDocs = await getDocs(courtesyQuery);
+      courtesyDocs.forEach(d => batch.delete(d.ref));
+    } catch (err) {
+      console.warn('No se pudieron limpiar cortesías asociadas a la venta:', err);
+    }
+
     await batch.commit();
     await waitForServerConfirmation();
   },
@@ -573,10 +621,8 @@ export const salesService = {
     );
 
     return onSnapshot(q, (snapshot) => {
-      // Filtrar ventas del día actual en el cliente
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      // Día calendario Colombia, independiente de la TZ del navegador.
+      const hoyBogota = bogotaDateKey();
 
       const allSales = snapshot.docs.map(doc => {
         const data = doc.data();
@@ -609,12 +655,12 @@ export const salesService = {
           saleDate = new Date(sale.createdAt);
         }
 
-        return saleDate >= todayStart && saleDate <= todayEnd;
+        return bogotaDateKey(saleDate) === hoyBogota;
       });
 
       console.log(`🔥 Ventas totales del vendedor: ${allSales.length}`);
       console.log(`🔥 Ventas del día (filtradas): ${todaySales.length}`);
-      console.log(`🔥 Rango del día: ${todayStart.toISOString()} - ${todayEnd.toISOString()}`);
+      console.log(`🔥 Día Colombia: ${hoyBogota}`);
 
       // Ordenar las ventas por fecha de creación (más reciente primero) en el cliente
       const sortedSales = todaySales.sort((a, b) => {
@@ -875,8 +921,50 @@ export const layawaysService = {
 
   async delete(id: string): Promise<void> {
     console.log('🗑️ Eliminando plan separe:', id);
-    await deleteDoc(doc(db, COLLECTIONS.LAYAWAYS, id));
-    console.log('✅ Plan separe eliminado');
+
+    const layawayRef = doc(db, COLLECTIONS.LAYAWAYS, id);
+    const layawayDoc = await getDoc(layawayRef);
+
+    if (!layawayDoc.exists()) {
+      throw new Error('Plan separe no encontrado');
+    }
+
+    const layawayData = layawayDoc.data() as LayawayPlan;
+    const batch = writeBatch(db);
+
+    batch.delete(layawayRef);
+
+    // IMPORTANTE: si el plan ya está cancelado, el stock no recogido YA fue
+    // devuelto por handleCancelLayaway en Layaway.tsx. NO restaurar otra vez
+    // o se generaría un doble incremento de inventario.
+    // Para activos / completed, devolvemos las unidades reservadas que no
+    // hayan sido recogidas (las recogidas salieron físicamente de la tienda).
+    if (layawayData.status !== 'cancelled') {
+      for (const item of layawayData.items || []) {
+        const reservedNotPicked = Math.max(
+          0,
+          (item.quantity || 0) - (item.pickedUpQuantity || 0)
+        );
+        if (reservedNotPicked > 0 && item.productId) {
+          const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
+          const productDoc = await getDoc(productRef);
+          if (productDoc.exists()) {
+            batch.update(productRef, {
+              stock: increment(reservedNotPicked),
+              updatedAt: getColombiaTimestamp()
+            });
+          }
+        }
+      }
+    }
+
+    await batch.commit();
+    await waitForServerConfirmation();
+    console.log(
+      layawayData.status === 'cancelled'
+        ? '✅ Plan separe (cancelado) eliminado — stock ya estaba devuelto'
+        : '✅ Plan separe eliminado y stock no recogido restaurado'
+    );
   }
 };
 
@@ -1072,8 +1160,64 @@ export const technicalServicesService = {
 
   async delete(id: string): Promise<void> {
     console.log('🗑️ Eliminando servicio técnico:', id);
-    await deleteDoc(doc(db, COLLECTIONS.TECHNICAL_SERVICES, id));
-    console.log('✅ Servicio técnico eliminado');
+
+    const serviceRef = doc(db, COLLECTIONS.TECHNICAL_SERVICES, id);
+    const serviceDoc = await getDoc(serviceRef);
+
+    if (!serviceDoc.exists()) {
+      throw new Error('Servicio técnico no encontrado');
+    }
+
+    const serviceData = serviceDoc.data() as TechnicalService;
+    const batch = writeBatch(db);
+
+    batch.delete(serviceRef);
+
+    // Devolver repuestos no recogidos al stock. Solo afecta items con productId
+    // — los repuestos personalizados (sin productId) nunca descontaron inventario.
+    //
+    // NOTA: a diferencia de los planes separe, `processCancellation` en
+    // TechnicalService.tsx NO devuelve stock al cancelar; solo cambia status.
+    // Por eso aquí restauramos en TODOS los casos (active, completed, cancelled),
+    // sin guard de status — si lo añadiéramos, los servicios cancelados dejarían
+    // el stock atrapado para siempre.
+    for (const item of serviceData.items || []) {
+      const productId = (item as any).productId;
+      if (!productId) continue;
+      const reservedNotPicked = Math.max(
+        0,
+        (item.quantity || 0) - ((item as any).pickedUpQuantity || 0)
+      );
+      if (reservedNotPicked > 0) {
+        const productRef = doc(db, COLLECTIONS.PRODUCTS, productId);
+        const productDoc = await getDoc(productRef);
+        if (productDoc.exists()) {
+          batch.update(productRef, {
+            stock: increment(reservedNotPicked),
+            updatedAt: getColombiaTimestamp()
+          });
+        }
+      }
+    }
+
+    // Restaurar también stock de cortesías del servicio técnico
+    if (serviceData.courtesyItems && Array.isArray(serviceData.courtesyItems)) {
+      for (const courtesyItem of serviceData.courtesyItems) {
+        if (!courtesyItem.productId) continue;
+        const productRef = doc(db, COLLECTIONS.PRODUCTS, courtesyItem.productId);
+        const productDoc = await getDoc(productRef);
+        if (productDoc.exists()) {
+          batch.update(productRef, {
+            stock: increment(courtesyItem.quantity),
+            updatedAt: getColombiaTimestamp()
+          });
+        }
+      }
+    }
+
+    await batch.commit();
+    await waitForServerConfirmation();
+    console.log('✅ Servicio técnico eliminado y stock no recogido restaurado');
   },
 
   subscribe(callback: (technicalServices: TechnicalService[]) => void): () => void {
@@ -1148,9 +1292,9 @@ export const statsService = {
     // Filtrar layaways activos en el cliente
     const activeLayaways = allLayaways.filter(layaway => layaway.status === 'active');
 
-    const today = new Date().toDateString();
-    const todaysSales = sales.filter(sale => 
-      new Date(sale.createdAt).toDateString() === today
+    const todayKey = bogotaDateKey();
+    const todaysSales = sales.filter(sale =>
+      bogotaDateKey(new Date(sale.createdAt)) === todayKey
     );
     
     const layawayRevenue = allLayaways.reduce((sum, layaway) => 
@@ -1222,11 +1366,15 @@ export const purchasesService = {
       
       batch.set(purchaseRef, purchase);
 
-      // Actualizar el inventario de cada producto
+      // Actualizar el inventario de cada producto.
+      // El stock se actualiza con increment() para que sea atómico y no compita
+      // con ventas u otras operaciones concurrentes. El precio promedio ponderado
+      // sigue calculándose con la lectura previa — su pequeña ventana de race
+      // sólo afecta el costo promedio reportado, no el conteo de unidades.
       for (const item of purchaseData.items) {
         const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
         const productSnap = await getDoc(productRef);
-        
+
         if (!productSnap.exists()) {
           throw new Error(`Producto no encontrado: ${item.productId}`);
         }
@@ -1234,18 +1382,18 @@ export const purchasesService = {
         const product = productSnap.data() as Product;
         const currentStock = product.stock;
         const currentPurchasePrice = product.purchasePrice;
-        
-        // Calcular nuevo stock
-        const newStock = currentStock + item.quantity;
-        
-        // Calcular precio promedio ponderado
+
+        // Stock proyectado para el cálculo del precio promedio (no para escribir)
+        const projectedStock = currentStock + item.quantity;
+
+        // Precio promedio ponderado:
         // (stock_actual * precio_actual + nuevas_unidades * nuevo_precio) / stock_total
         const totalValue = (currentStock * currentPurchasePrice) + (item.quantity * item.purchasePrice);
-        const newPurchasePrice = newStock > 0 ? totalValue / newStock : item.purchasePrice;
-        
-        // Actualizar producto
+        const newPurchasePrice = projectedStock > 0 ? totalValue / projectedStock : item.purchasePrice;
+
+        // Actualizar producto — stock con increment() para atomicidad
         batch.update(productRef, {
-          stock: newStock,
+          stock: increment(item.quantity),
           purchasePrice: Math.round(newPurchasePrice), // Redondear para evitar decimales largos
           salePrice: item.newSalePrice || product.salePrice, // Actualizar precio de venta si se proporciona
           updatedAt: getColombiaTimestamp(),
@@ -1298,10 +1446,42 @@ export const purchasesService = {
 
   async delete(id: string): Promise<void> {
     try {
-      // Nota: En una implementación real, podrías querer revertir 
-      // los cambios de inventario, pero eso sería complejo.
-      // Por ahora solo eliminamos el registro de compra.
-      await deleteDoc(doc(db, COLLECTIONS.PURCHASES, id));
+      const purchaseRef = doc(db, COLLECTIONS.PURCHASES, id);
+      const purchaseDoc = await getDoc(purchaseRef);
+
+      if (!purchaseDoc.exists()) {
+        throw new Error('Compra no encontrada');
+      }
+
+      const purchaseData = purchaseDoc.data() as Purchase;
+      const batch = writeBatch(db);
+
+      batch.delete(purchaseRef);
+
+      // Revertir el stock que esta compra agregó al inventario, neto de
+      // cualquier devolución que ya se haya procesado contra ella (las
+      // devoluciones ya descontaron por su lado en usePurchaseReturns).
+      for (const item of purchaseData.items || []) {
+        const previouslyReturned = (purchaseData.returns || []).reduce((sum, ret) => {
+          const ri = (ret.items || []).find(r => r.productId === item.productId);
+          return sum + (ri?.returnedQuantity || 0);
+        }, 0);
+        const netAdded = (item.quantity || 0) - previouslyReturned;
+
+        if (netAdded > 0 && item.productId) {
+          const productRef = doc(db, COLLECTIONS.PRODUCTS, item.productId);
+          const productSnap = await getDoc(productRef);
+          if (productSnap.exists()) {
+            batch.update(productRef, {
+              stock: increment(-netAdded),
+              updatedAt: getColombiaTimestamp(),
+            });
+          }
+        }
+      }
+
+      await batch.commit();
+      await waitForServerConfirmation();
     } catch (error) {
       console.error('Error deleting purchase:', error);
       throw error;

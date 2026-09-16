@@ -19,6 +19,7 @@ import { selectTechnicalServices, selectCustomers } from '../store/selectors';
 import { TechnicalService, TechnicalServicePayment, Customer } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useSectionRealtime } from '../hooks/useOnDemandData';
+import { bogotaDateKey, startOfDayBogota, endOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 
 // Utilidad para convertir cualquier valor de fecha Firestore/JS a Date válido
 function getValidDate(date: any): Date | null {
@@ -92,34 +93,36 @@ export function TechnicalServicePayments() {
       );
     }
     
-    // Filtro por fecha de pago
+    // Filtro por fecha de pago (siempre día calendario Colombia)
     if (dateFilter !== 'all') {
-      const today = new Date();
-      const todayStr = today.toDateString();
-      
+      const todayKey = bogotaDateKey();
+      const yesterdayKey = subtractDaysBogota(1);
+      const monthPrefix = todayKey.slice(0, 7); // "YYYY-MM"
+      // Inicio de semana Colombia (domingo)
+      const dowBogota = new Date(`${todayKey}T12:00:00.000-05:00`).getUTCDay();
+      const weekStartKey = subtractDaysBogota(dowBogota);
+      const weekStartISO = startOfDayBogota(weekStartKey);
+
       filtered = filtered.filter(payment => {
         const paymentDate = getValidDate(payment.paymentDate);
         if (!paymentDate) return false;
-        
+        const paymentKey = bogotaDateKey(paymentDate);
+        const paymentISO = paymentDate.toISOString();
+
         switch (dateFilter) {
           case 'today':
-            return paymentDate.toDateString() === todayStr;
+            return paymentKey === todayKey;
           case 'yesterday':
-            const yesterday = new Date(today);
-            yesterday.setDate(yesterday.getDate() - 1);
-            return paymentDate.toDateString() === yesterday.toDateString();
+            return paymentKey === yesterdayKey;
           case 'thisWeek':
-            const weekStart = new Date(today);
-            weekStart.setDate(today.getDate() - today.getDay());
-            return paymentDate >= weekStart;
+            return paymentISO >= weekStartISO;
           case 'thisMonth':
-            return paymentDate.getMonth() === today.getMonth() && 
-                   paymentDate.getFullYear() === today.getFullYear();
+            return paymentKey.startsWith(monthPrefix);
           case 'custom':
             if (customDateRange.startDate && customDateRange.endDate) {
-              const start = new Date(customDateRange.startDate);
-              const end = new Date(customDateRange.endDate);
-              return paymentDate >= start && paymentDate <= end;
+              const startISO = startOfDayBogota(customDateRange.startDate);
+              const endISO   = endOfDayBogota(customDateRange.endDate);
+              return paymentISO >= startISO && paymentISO <= endISO;
             }
             return true;
           default:

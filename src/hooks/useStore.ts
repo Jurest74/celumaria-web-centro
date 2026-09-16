@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useLocalStorage } from './useLocalStorage';
 import { Product, Sale, DashboardStats, LayawayPlan, LayawayPayment, LayawayItem } from '../types';
+import { bogotaDateKey } from '../utils/dateUtils';
 
 export function useStore() {
   const [products, setProducts] = useLocalStorage<Product[]>('store-products', []);
@@ -221,9 +222,9 @@ export function useStore() {
   }, [layawayPlans]);
 
   const dashboardStats = useMemo((): DashboardStats => {
-    const today = new Date().toDateString();
-    const todaysSales = sales.filter(sale => 
-      new Date(sale.createdAt).toDateString() === today
+    const todayKey = bogotaDateKey();
+    const todaysSales = sales.filter(sale =>
+      bogotaDateKey(new Date(sale.createdAt)) === todayKey
     );
     
     const activeLayaways = layawayPlans.filter(l => l.status === 'active').length;

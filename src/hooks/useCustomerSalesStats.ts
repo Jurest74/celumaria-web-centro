@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Sale, Product, Category } from '../types';
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
 
 interface CustomerSalesOptions {
   customerId?: string;
@@ -53,49 +54,56 @@ export function useCustomerSalesStats({
   });
 
   const getDateRange = useCallback(() => {
-    const today = new Date();
-    let start: Date | null = null;
-    let end: Date | null = null;
+    // Rango ISO UTC en día calendario Colombia (TZ-independiente)
+    let startISO: string | null = null;
+    let endISO: string | null = null;
+    const todayKey = bogotaDateKey();
+    const [tY, tM] = todayKey.split('-').map(Number);
 
     switch (dateFilter) {
-      case 'thisMonth':
-        start = new Date(today.getFullYear(), today.getMonth(), 1);
-        end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+      case 'thisMonth': {
+        const startKey = `${todayKey.slice(0, 7)}-01`;
+        startISO = startOfDayBogota(startKey);
+        endISO   = endOfDayBogota(todayKey);
         break;
-      case 'lastMonth':
-        start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        end = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999);
+      }
+      case 'lastMonth': {
+        const lastY = tM === 1 ? tY - 1 : tY;
+        const lastM = tM === 1 ? 12 : tM - 1;
+        const lastMKey = `${lastY}-${String(lastM).padStart(2, '0')}-01`;
+        const daysInLast = new Date(Date.UTC(tY, tM - 1, 0)).getUTCDate();
+        const lastDayKey = `${lastY}-${String(lastM).padStart(2, '0')}-${String(daysInLast).padStart(2, '0')}`;
+        startISO = startOfDayBogota(lastMKey);
+        endISO   = endOfDayBogota(lastDayKey);
         break;
+      }
       case 'last3Months':
-        start = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-        end = today;
+        startISO = startOfDayBogota(subtractDaysBogota(90));
+        endISO   = endOfDayBogota(todayKey);
         break;
       case 'last6Months':
-        start = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-        end = today;
+        startISO = startOfDayBogota(subtractDaysBogota(180));
+        endISO   = endOfDayBogota(todayKey);
         break;
       case 'thisYear':
-        start = new Date(today.getFullYear(), 0, 1);
-        end = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
+        startISO = startOfDayBogota(`${tY}-01-01`);
+        endISO   = endOfDayBogota(`${tY}-12-31`);
         break;
       case 'lastYear':
-        start = new Date(today.getFullYear() - 1, 0, 1);
-        end = new Date(today.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+        startISO = startOfDayBogota(`${tY - 1}-01-01`);
+        endISO   = endOfDayBogota(`${tY - 1}-12-31`);
         break;
       case 'allTime':
-        // Sin filtro de fecha
         break;
     }
 
     // Override con fechas personalizadas si se proporcionan
     if (startDate && endDate) {
-      const [yearStart, monthStart, dayStart] = startDate.split('-').map(Number);
-      const [yearEnd, monthEnd, dayEnd] = endDate.split('-').map(Number);
-      start = new Date(yearStart, monthStart - 1, dayStart, 0, 0, 0, 0);
-      end = new Date(yearEnd, monthEnd - 1, dayEnd, 23, 59, 59, 999);
+      startISO = startOfDayBogota(startDate);
+      endISO   = endOfDayBogota(endDate);
     }
 
-    return { start, end };
+    return { startISO, endISO };
   }, [dateFilter, startDate, endDate]);
 
   const fetchCustomerStats = useCallback(async () => {
@@ -107,14 +115,14 @@ export function useCustomerSalesStats({
     setStats(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const { start, end } = getDateRange();
-      
+      const { startISO, endISO } = getDateRange();
+
       // Query base para el cliente
       let constraints: any[] = [where('customerId', '==', customerId)];
-      
+
       // Agregar filtros de fecha si aplican
-      if (start) constraints.push(where('createdAt', '>=', start.toISOString()));
-      if (end) constraints.push(where('createdAt', '<=', end.toISOString()));
+      if (startISO) constraints.push(where('createdAt', '>=', startISO));
+      if (endISO)   constraints.push(where('createdAt', '<=', endISO));
 
       const customerQuery = query(
         collection(db, 'sales'),
@@ -150,9 +158,9 @@ export function useCustomerSalesStats({
         }
 
         if (!isNaN(dateObj.getTime())) {
-          const dayKey = dateObj.toISOString().split('T')[0];
-          const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
-          
+          const dayKey = bogotaDateKey(dateObj);   // día calendario Colombia
+          const monthKey = dayKey.slice(0, 7);     // "YYYY-MM" Colombia
+
           salesByDay.set(dayKey, (salesByDay.get(dayKey) || 0) + (sale.total ?? 0));
           salesByMonth.set(monthKey, (salesByMonth.get(monthKey) || 0) + (sale.total ?? 0));
         }
@@ -174,20 +182,19 @@ export function useCustomerSalesStats({
         }
       });
 
-      // Calcular datos mensuales (últimos 12 meses solamente)
-      const now = new Date();
-      const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-      
+      // Calcular datos mensuales (últimos 12 meses solamente, en calendario Colombia)
+      const todayKeyForMonths = bogotaDateKey();
+      const [tYear, tMonth] = todayKeyForMonths.split('-').map(Number);
+      // Mes 12 atrás respecto al mes actual Colombia
+      const cutoffYear = tMonth - 11 <= 0 ? tYear - 1 : tYear;
+      const cutoffMonth = ((tMonth - 11) + 12 - 1) % 12 + 1; // 1..12
+      const twelveMonthsAgoKey = `${cutoffYear}-${String(cutoffMonth).padStart(2, '0')}`;
+
       const monthlyData: CustomerSalesPeriod[] = Array.from(salesByMonth.entries())
         .map(([period, totalSales]) => {
-          // Filtrar solo los últimos 12 meses
-          const [year, month] = period.split('-').map(Number);
-          const periodDate = new Date(year, month - 1);
-          
-          if (periodDate < twelveMonthsAgo) {
-            return null;
-          }
-          
+          // period = "YYYY-MM" Colombia
+          if (period < twelveMonthsAgoKey) return null;
+
           const monthSales = customerSales.filter(sale => {
             let dateObj;
             if (typeof sale.createdAt === 'object' && sale.createdAt !== null && 'seconds' in sale.createdAt) {
@@ -195,7 +202,7 @@ export function useCustomerSalesStats({
             } else {
               dateObj = new Date(sale.createdAt);
             }
-            const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = bogotaDateKey(dateObj).slice(0, 7);
             return monthKey === period;
           });
           
@@ -214,7 +221,7 @@ export function useCustomerSalesStats({
         .sort((a, b) => a.period.localeCompare(b.period));
 
       // Calcular datos anuales (solo este año y el año pasado)
-      const currentYear = now.getFullYear();
+      const currentYear = Number(bogotaDateKey().slice(0, 4));
       const lastYear = currentYear - 1;
       
       const salesByYear = new Map<string, { total: number; profit: number; count: number }>();
@@ -227,7 +234,7 @@ export function useCustomerSalesStats({
         }
 
         if (!isNaN(dateObj.getTime())) {
-          const year = dateObj.getFullYear();
+          const year = Number(bogotaDateKey(dateObj).slice(0, 4));
           
           // Solo incluir este año y el año pasado
           if (year === currentYear || year === lastYear) {

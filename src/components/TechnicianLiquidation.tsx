@@ -7,6 +7,7 @@ import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
+import { bogotaDateKey, subtractDaysBogota } from '../utils/dateUtils';
 
 export function TechnicianLiquidationComponent() {
   const { user, appUser } = useAuth();
@@ -17,9 +18,10 @@ export function TechnicianLiquidationComponent() {
   const [completedServices, setCompletedServices] = useState<TechnicalService[]>([]);
   const [liquidations, setLiquidations] = useState<TechnicianLiquidation[]>([]);
   const [selectedTechnicianFilter, setSelectedTechnicianFilter] = useState('');
-  // Configurar fechas por defecto: día actual para ambos filtros
-  const today = new Date().toISOString().split('T')[0];
-  const sixMonthsAgo = new Date(Date.now() - 6 * 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Fechas por defecto: día actual Colombia (no UTC, no del navegador)
+  const today = bogotaDateKey();
+  // Conservado por compatibilidad con antiguo cálculo "hace 6 meses"; ahora son 180 días reales en Bogotá
+  const sixMonthsAgo = subtractDaysBogota(180);
   const [dateFromFilter, setDateFromFilter] = useState(today);
   const [dateToFilter, setDateToFilter] = useState(today);
   const [searchTerm, setSearchTerm] = useState('');
@@ -125,7 +127,7 @@ export function TechnicianLiquidationComponent() {
       // Filtro de rango de fechas
       let matchesDateRange = true;
       if (dateFromFilter || dateToFilter) {
-        const serviceDate = service.completedAt ? new Date(service.completedAt).toISOString().split('T')[0] : null;
+        const serviceDate = service.completedAt ? bogotaDateKey(new Date(service.completedAt)) : null;
         if (serviceDate) {
           if (dateFromFilter && serviceDate < dateFromFilter) matchesDateRange = false;
           if (dateToFilter && serviceDate > dateToFilter) matchesDateRange = false;
@@ -151,7 +153,7 @@ export function TechnicianLiquidationComponent() {
       // Filtro de rango de fechas
       let matchesDateRange = true;
       if (dateFromFilter || dateToFilter) {
-        const liquidationDate = new Date(liquidation.createdAt).toISOString().split('T')[0];
+        const liquidationDate = bogotaDateKey(new Date(liquidation.createdAt));
         if (dateFromFilter && liquidationDate < dateFromFilter) matchesDateRange = false;
         if (dateToFilter && liquidationDate > dateToFilter) matchesDateRange = false;
       }
@@ -437,7 +439,7 @@ export function TechnicianLiquidationComponent() {
             </button>
             <button
               onClick={() => {
-                const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const yesterday = subtractDaysBogota(1);
                 setDateFromFilter(yesterday);
                 setDateToFilter(yesterday);
               }}
@@ -447,7 +449,7 @@ export function TechnicianLiquidationComponent() {
             </button>
             <button
               onClick={() => {
-                const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const weekAgo = subtractDaysBogota(7);
                 setDateFromFilter(weekAgo);
                 setDateToFilter(today);
               }}
@@ -457,7 +459,7 @@ export function TechnicianLiquidationComponent() {
             </button>
             <button
               onClick={() => {
-                const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const monthAgo = subtractDaysBogota(30);
                 setDateFromFilter(monthAgo);
                 setDateToFilter(today);
               }}

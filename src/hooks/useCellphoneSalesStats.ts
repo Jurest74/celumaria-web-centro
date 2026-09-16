@@ -3,6 +3,18 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Sale, Product, Category } from '../types';
 import { useAppSelector } from './useAppSelector';
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
+
+const BOGOTA_OFFSET = '-05:00';
+
+function applyTimeOfDayBogotaISO(iso: string, hhmm: string, kind: 'start' | 'end'): string {
+  const dateKey = bogotaDateKey(new Date(iso));
+  const [h, m] = hhmm.split(':').map(Number);
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const tail = kind === 'start' ? `${hh}:${mm}:00.000` : `${hh}:${mm}:59.999`;
+  return new Date(`${dateKey}T${tail}${BOGOTA_OFFSET}`).toISOString();
+}
 
 interface UseCellphoneSalesStatsOptions {
   searchTerm?: string;
@@ -114,64 +126,28 @@ export function useCellphoneSalesStats({
       let q = collection(db, 'sales');
       let constraints: any[] = [];
       
-      // Date filter
-      const today = new Date();
-      let startDate: Date | null = null;
-      let endDate: Date | null = null;
-
+      // Rango en día calendario Colombia (TZ-independiente)
+      let startISO: string | null = null;
+      let endISO: string | null = null;
       switch (dateFilter) {
-        case 'today': {
-          startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-          endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-          break;
-        }
-        case 'week':
-          startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case '3months':
-          startDate = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-        case '6months':
-          startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
+        case 'today':    startISO = startOfDayBogota(); endISO = endOfDayBogota(); break;
+        case 'week':     startISO = startOfDayBogota(subtractDaysBogota(7)); endISO = endOfDayBogota(); break;
+        case 'month':    startISO = startOfDayBogota(subtractDaysBogota(30)); endISO = endOfDayBogota(); break;
+        case '3months':  startISO = startOfDayBogota(subtractDaysBogota(90)); endISO = endOfDayBogota(); break;
+        case '6months':  startISO = startOfDayBogota(subtractDaysBogota(180)); endISO = endOfDayBogota(); break;
+        case 'year':     startISO = startOfDayBogota(subtractDaysBogota(365)); endISO = endOfDayBogota(); break;
         case 'custom':
           if (customDateRange.startDate && customDateRange.endDate) {
-            const [yearStart, monthStart, dayStart] = customDateRange.startDate.split('-').map(Number);
-            const [yearEnd, monthEnd, dayEnd] = customDateRange.endDate.split('-').map(Number);
-            
-            // Default full day range for custom dates
-            startDate = new Date(yearStart, monthStart - 1, dayStart, 0, 0, 0, 0);
-            endDate = new Date(yearEnd, monthEnd - 1, dayEnd, 23, 59, 59, 999);
+            startISO = startOfDayBogota(customDateRange.startDate);
+            endISO = endOfDayBogota(customDateRange.endDate);
           }
           break;
       }
 
-      // Apply time filtering to any date range if timeRange is provided
-      if (timeRange.startTime && timeRange.endTime && startDate && endDate) {
-        const [startHour, startMinute] = timeRange.startTime.split(':').map(Number);
-        const [endHour, endMinute] = timeRange.endTime.split(':').map(Number);
-        
-        // For single day ranges (today), apply time to the same day
-        if (dateFilter === 'today') {
-          startDate.setHours(startHour, startMinute, 0, 0);
-          endDate.setHours(endHour, endMinute, 59, 999);
-        } else {
-          // For multi-day ranges, apply time filtering to the start and end dates
-          startDate.setHours(startHour, startMinute, 0, 0);
-          endDate.setHours(endHour, endMinute, 59, 999);
-        }
+      if (timeRange.startTime && timeRange.endTime && startISO && endISO) {
+        startISO = applyTimeOfDayBogotaISO(startISO, timeRange.startTime, 'start');
+        endISO = applyTimeOfDayBogotaISO(endISO, timeRange.endTime, 'end');
       }
-
-      // NOTA: Comentamos los filtros de fecha en Firestore porque causan problemas de zona horaria
-      // El filtrado de fechas se hace en el cliente
-      // if (startDate) constraints.push(where('createdAt', '>=', startDate.toISOString()));
-      // if (endDate) constraints.push(where('createdAt', '<=', endDate.toISOString()));
       
       if (paymentMethodFilter !== 'all') {
         constraints.push(where('paymentMethod', '==', paymentMethodFilter));
@@ -185,28 +161,27 @@ export function useCellphoneSalesStats({
       const snap = await getDocs(qFinal);
       let sales = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Sale[];
 
-      // FILTRO DE FECHA EN CLIENTE (evita problemas de zona horaria)
+      // FILTRO DE FECHA EN CLIENTE (TZ-independiente, comparación de strings ISO)
       sales = sales.filter(sale => {
-        // Ignorar ventas con timestamps corruptos
-        if (sale.createdAt && sale.createdAt._methodName === 'serverTimestamp') {
+        if (sale.createdAt && (sale.createdAt as any)._methodName === 'serverTimestamp') {
           return false;
         }
 
-        // Aplicar filtro de fecha
-        if (sale.createdAt && (startDate || endDate)) {
-          let saleDate: Date;
+        if (sale.createdAt && (startISO || endISO)) {
+          let saleISO: string;
           if (typeof sale.createdAt === 'string') {
-            saleDate = new Date(sale.createdAt);
-          } else if (sale.createdAt.toDate && typeof sale.createdAt.toDate === 'function') {
-            saleDate = sale.createdAt.toDate();
-          } else if (sale.createdAt.seconds) {
-            saleDate = new Date(sale.createdAt.seconds * 1000);
+            saleISO = sale.createdAt;
+          } else if ((sale.createdAt as any).toDate) {
+            saleISO = (sale.createdAt as any).toDate().toISOString();
+          } else if ((sale.createdAt as any).seconds) {
+            saleISO = new Date((sale.createdAt as any).seconds * 1000).toISOString();
           } else {
-            saleDate = new Date(sale.createdAt);
+            const d = new Date(sale.createdAt as any);
+            if (isNaN(d.getTime())) return false;
+            saleISO = d.toISOString();
           }
-
-          if (startDate && saleDate < startDate) return false;
-          if (endDate && saleDate > endDate) return false;
+          if (startISO && saleISO < startISO) return false;
+          if (endISO && saleISO > endISO) return false;
         }
 
         return true;

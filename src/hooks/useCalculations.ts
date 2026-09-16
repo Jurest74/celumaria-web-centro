@@ -4,6 +4,7 @@ import { useAppSelector } from './useAppSelector';
 import { selectProducts, selectSales, selectLayaways, selectCustomers, selectCategories } from '../store/selectors';
 import { calculations } from '../utils/calculations';
 import type { DashboardStats } from '../types';
+import { bogotaDateKey, subtractDaysBogota } from '../utils/dateUtils';
 
 // Hook para estadísticas del dashboard (memoizado)
 export function useDashboardCalculations(): DashboardStats | null {
@@ -77,16 +78,12 @@ export function useReportsCalculations() {
   const products = useAppSelector(selectProducts);
 
   return useMemo(() => {
-    // Ventas por día (últimos 7 días)
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      return date.toDateString();
-    }).reverse();
+    // Ventas por día (últimos 7 días, en calendario Colombia)
+    const last7Days = Array.from({ length: 7 }, (_, i) => subtractDaysBogota(i)).reverse();
 
     const salesByDay = last7Days.map(dateString => {
-      const daySales = sales.filter(sale => 
-        new Date(sale.createdAt).toDateString() === dateString
+      const daySales = sales.filter(sale =>
+        bogotaDateKey(new Date(sale.createdAt)) === dateString
       );
       
       return {

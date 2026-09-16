@@ -1,15 +1,20 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Search, Edit, Trash2, AlertTriangle, Package, TrendingUp, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { addDoc, collection } from 'firebase/firestore';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectProducts, selectActiveCategories } from '../store/selectors';
 import { productsService } from '../services/firebase/firestore';
+import { COLLECTIONS } from '../services/firebase/collections';
+import { db } from '../config/firebase';
 import { deleteProduct } from '../store/slices/productsSlice';
 import { useFirebase } from '../contexts/FirebaseContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Product } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
 import { usePaginatedProducts } from '../hooks/usePaginatedProducts';
+import { getColombiaTimestamp } from '../utils/dateUtils';
 
 export function Inventory() {
   // Redux selectors para estadísticas generales
@@ -18,6 +23,7 @@ export function Inventory() {
   const { showSuccess, showError, showConfirm } = useNotification();
   const dispatch = useAppDispatch();
   const firebase = useFirebase();
+  const { appUser } = useAuth();
   
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -171,7 +177,30 @@ export function Inventory() {
 
       if (editingProduct) {
         console.log('Actualizando producto:', editingProduct.id);
+        const previousStock = Number(editingProduct.stock || 0);
         await productsService.update(editingProduct.id, productData);
+
+        // Auditoría: si el stock cambió manualmente, dejar registro
+        // en /stockAdjustments con quién, cuándo, y los valores antes/después.
+        // Tolerante a fallo (si las reglas no permiten escribir, no rompe el flujo).
+        if (previousStock !== stock) {
+          try {
+            await addDoc(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), {
+              productId: editingProduct.id,
+              productName: productData.name,
+              previousStock,
+              newStock: stock,
+              delta: stock - previousStock,
+              reason: 'manual_inventory_edit',
+              userId: appUser?.uid || null,
+              userEmail: appUser?.email || null,
+              userName: appUser?.displayName || appUser?.email || null,
+              createdAt: getColombiaTimestamp(),
+            });
+          } catch (auditErr) {
+            console.warn('No se pudo registrar la auditoría de ajuste de stock:', auditErr);
+          }
+        }
 
         formRef.current?.reset();
         setPurchasePriceDisplay('');

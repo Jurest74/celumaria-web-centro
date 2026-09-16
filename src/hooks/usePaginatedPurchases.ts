@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, orderBy, limit, startAfter, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Purchase } from '../types';
+import { startOfDayBogota, endOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 
 interface UsePaginatedPurchasesOptions {
   searchTerm?: string;
@@ -32,49 +33,27 @@ export function usePaginatedPurchases({
     let q = collection(db, 'purchases');
     let constraints: any[] = [];
 
-    // Date filter
-    const today = new Date();
-    let startDate: Date | null = null;
-    let endDate: Date | null = null;
+    // Rango en día calendario Colombia (TZ-independiente)
+    let startISO: string | null = null;
+    let endISO: string | null = null;
     switch (dateFilter) {
-      case 'today': {
-        // Rango local: 00:00:00 a 23:59:59 del día actual en zona local
-        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-        break;
-      }
-      case 'week':
-        startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '3months':
-        startDate = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case '6months':
-        startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        startDate = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
+      case 'today':    startISO = startOfDayBogota(); endISO = endOfDayBogota(); break;
+      case 'week':     startISO = startOfDayBogota(subtractDaysBogota(7)); endISO = endOfDayBogota(); break;
+      case 'month':    startISO = startOfDayBogota(subtractDaysBogota(30)); endISO = endOfDayBogota(); break;
+      case '3months':  startISO = startOfDayBogota(subtractDaysBogota(90)); endISO = endOfDayBogota(); break;
+      case '6months':  startISO = startOfDayBogota(subtractDaysBogota(180)); endISO = endOfDayBogota(); break;
+      case 'year':     startISO = startOfDayBogota(subtractDaysBogota(365)); endISO = endOfDayBogota(); break;
       case 'custom':
-        // Only execute query if both dates are selected
         if (customDateRange.startDate && customDateRange.endDate) {
-          // Parse date in local timezone to avoid timezone issues
-          const [yearStart, monthStart, dayStart] = customDateRange.startDate.split('-').map(Number);
-          startDate = new Date(yearStart, monthStart - 1, dayStart, 0, 0, 0, 0);
-          
-          const [yearEnd, monthEnd, dayEnd] = customDateRange.endDate.split('-').map(Number);
-          endDate = new Date(yearEnd, monthEnd - 1, dayEnd, 23, 59, 59, 999);
+          startISO = startOfDayBogota(customDateRange.startDate);
+          endISO   = endOfDayBogota(customDateRange.endDate);
         } else {
-          // Return early if both dates are not selected - no query should be executed
           return null;
         }
         break;
     }
-    if (startDate) constraints.push(where('createdAt', '>=', startDate.toISOString()));
-    if (endDate) constraints.push(where('createdAt', '<=', endDate.toISOString()));
+    if (startISO) constraints.push(where('createdAt', '>=', startISO));
+    if (endISO)   constraints.push(where('createdAt', '<=', endISO));
 
     // Order
     let orderField = 'createdAt';
