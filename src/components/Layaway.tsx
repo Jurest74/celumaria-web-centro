@@ -3,7 +3,8 @@ import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Cl
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectLayaways, selectProducts, selectCustomers } from '../store/selectors';
-import { layawaysService, productsService } from '../services/firebase/firestore';
+import { layawaysService, productsService, registrarPago } from '../services/firebase/firestore';
+import { COLLECTIONS } from '../services/firebase/collections';
 import { customersService } from '../services/firebase/firestore';
 import { LayawayPlan, LayawayItem, PaymentMethod } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
@@ -352,69 +353,78 @@ export function Layaway() {
         notes
     };
 
-    const newRemainingBalance = layaway.remainingBalance - totalAmount;
-    // <= 0 y no === 0: con una igualdad exacta, un saldo que quede en
-    // -1 por un sobrepago, o con decimales por un redondeo, dejaba el plan
-    // activo para siempre y sus productos sin entregarse.
-    const newStatus = newRemainingBalance <= 0 ? 'completed' : layaway.status;
-    
-    // Si el plan se completa, marcar todos los productos como recogidos y registrar ventas reales
-    let updatedItems = layaway.items;
-    let autoDeliveryItems: (LayawayItem & { deliveredQuantity: number })[] = [];
-    if (newStatus === 'completed') {
-      updatedItems = layaway.items.map(item => {
-        const remainingQuantity = item.quantity - (item.pickedUpQuantity || 0);
-        if (remainingQuantity > 0) {
-          // Guardar info para registrar venta real después
-          autoDeliveryItems.push({
-            ...item,
-            deliveredQuantity: remainingQuantity
-          });
+    // El plan, el abono en ventas y las entregas automaticas se guardan en una
+    // sola transaccion, calculados sobre el plan tal como esta en Firestore y
+    // no sobre la copia de la pantalla (ver registrarPago).
+    return registrarPago<LayawayPlan, {
+      updatedLayaway: LayawayPlan;
+      newStatus: LayawayPlan['status'];
+      creditUsed: number;
+    }>(COLLECTIONS.LAYAWAYS, layaway.id, (actual) => {
+      // Si otro equipo abono mientras tanto, el saldo de la pantalla ya no es
+      // el real: se rechaza en vez de dejar el plan sobrepagado.
+      if (totalAmount > actual.remainingBalance + 0.01) {
+        throw new Error(
+          `El saldo pendiente del plan cambió (ahora es ${formatCurrency(actual.remainingBalance)}), ` +
+          'probablemente porque se registró otro abono desde otro equipo. Recarga el plan y vuelve a intentar.'
+        );
+      }
 
-          const newPickupRecord = {
-            id: crypto.randomUUID(),
-            quantity: remainingQuantity,
-            date: new Date().toISOString(),
-            notes: 'Marcado automáticamente como recogido al completar el pago'
-          };
-          return {
-            ...item,
-            pickedUpQuantity: item.quantity,
-            pickedUpHistory: [...(item.pickedUpHistory || []), newPickupRecord]
-          };
-        }
-        return item;
-      });
-    }
+      const newRemainingBalance = actual.remainingBalance - totalAmount;
+      // <= 0 y no === 0: con una igualdad exacta, un saldo que quede en
+      // -1 por un sobrepago, o con decimales por un redondeo, dejaba el plan
+      // activo para siempre y sus productos sin entregarse.
+      const newStatus = newRemainingBalance <= 0 ? 'completed' : actual.status;
 
-    // Actualizar en Firebase
-    const updatedPayments = [...layaway.payments, newPayment];
-    const updateData: any = {
-      payments: updatedPayments.map(p => ({
+      // Si el plan se completa, marcar todos los productos como recogidos y registrar ventas reales
+      let updatedItems = actual.items;
+      const autoDeliveryItems: (LayawayItem & { deliveredQuantity: number })[] = [];
+      if (newStatus === 'completed') {
+        updatedItems = actual.items.map(item => {
+          const remainingQuantity = item.quantity - (item.pickedUpQuantity || 0);
+          if (remainingQuantity > 0) {
+            // Guardar info para registrar venta real después
+            autoDeliveryItems.push({
+              ...item,
+              deliveredQuantity: remainingQuantity
+            });
+
+            const newPickupRecord = {
+              id: crypto.randomUUID(),
+              quantity: remainingQuantity,
+              date: new Date().toISOString(),
+              notes: 'Marcado automáticamente como recogido al completar el pago'
+            };
+            return {
+              ...item,
+              pickedUpQuantity: item.quantity,
+              pickedUpHistory: [...(item.pickedUpHistory || []), newPickupRecord]
+            };
+          }
+          return item;
+        });
+      }
+
+      const updatedPayments = [...(actual.payments || []), newPayment].map(p => ({
         ...p,
         paymentMethod: (['efectivo', 'transferencia', 'tarjeta', 'crédito'].includes(p.paymentMethod) ? p.paymentMethod : 'efectivo') as 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito'
-      })),
-      remainingBalance: newRemainingBalance,
-      status: newStatus
-    };
-    if (newStatus === 'completed') {
-      updateData.items = updatedItems;
-    }
-    await layawaysService.update(layaway.id, updateData);
+      }));
+      const cambios: Record<string, unknown> = {
+        payments: updatedPayments,
+        remainingBalance: newRemainingBalance,
+        status: newStatus
+      };
+      if (newStatus === 'completed') {
+        cambios.items = updatedItems;
+      }
 
-    // Registrar el abono como flujo de caja (sin ganancia hasta entregar productos)
-    console.log('💰 Iniciando registro de abono en ventas:', { totalAmount, layawayId: layaway.id });
-    try {
-      const { salesService } = await import('../services/firebase/firestore');
-      
+      // Registrar el abono como flujo de caja (sin ganancia hasta entregar productos)
       // Calcular proporción del abono para cada producto
-      const proportionalRevenue = layaway.totalAmount > 0 
-        ? totalAmount / layaway.totalAmount 
+      const proportionalRevenue = actual.totalAmount > 0 
+        ? totalAmount / actual.totalAmount 
         : 0;
-      
-      console.log('📊 Proporción calculada:', { proportionalRevenue, layawayTotal: layaway.totalAmount });
-      
-      const saleItems = layaway.items.map(item => ({
+
+      const saleItems = actual.items.map(item => ({
         productId: item.productId,
         productName: item.productName,
         quantity: 0, // No se entrega producto en el abono
@@ -427,7 +437,7 @@ export function Layaway() {
       
       const comisionesDelAbono = allPaymentMethods.reduce((sum, pm) => sum + (pm.commission || 0), 0);
 
-      const saleData = {
+      const ventas: Record<string, unknown>[] = [{
         items: saleItems,
         subtotal: totalAmount,
         discount: 0,
@@ -441,85 +451,70 @@ export function Layaway() {
         totalCommissions: comisionesDelAbono,
         paymentMethod: primaryMethod,
         paymentMethods: allPaymentMethods,
-        customerName: layaway.customerName,
-        customerId: layaway.customerId,
+        customerName: actual.customerName,
+        customerId: actual.customerId,
         salesPersonId: appUser?.uid,
         salesPersonName: appUser?.displayName || appUser?.email || 'N/A',
         isLayaway: true,
-        layawayId: layaway.id,
-        type: 'layaway_payment' as 'layaway_payment', // Identificar como abono
+        layawayId: actual.id,
+        type: 'layaway_payment', // Identificar como abono
         notes: `Abono plan separe - ${creditUsed > 0 ? `Saldo a favor usado: ${formatCurrency(creditUsed)}` : ''}`
-      };
-      
-      console.log('💾 Registrando venta con datos:', saleData);
-      await salesService.add(saleData);
-      console.log('✅ Abono registrado exitosamente en ventas');
-    } catch (err) {
-      console.error('❌ Error registrando abono de plan separe:', err);
-    }
+      }];
 
-    // Registrar ventas reales para productos marcados automáticamente como entregados
-    if (autoDeliveryItems.length > 0) {
-      try {
-        const { salesService } = await import('../services/firebase/firestore');
-        
-        for (const item of autoDeliveryItems) {
-          // Calcular ganancia real al entregar producto automáticamente
-          const deliveryRevenue = item.deliveredQuantity * item.productSalePrice;
-          const deliveryCost = item.deliveredQuantity * item.productPurchasePrice;
-          const deliveryProfit = deliveryRevenue - deliveryCost;
-          const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
+      // Registrar ventas reales para productos marcados automáticamente como entregados
+      for (const item of autoDeliveryItems) {
+        // Calcular ganancia real al entregar producto automáticamente
+        const deliveryRevenue = item.deliveredQuantity * item.productSalePrice;
+        const deliveryCost = item.deliveredQuantity * item.productPurchasePrice;
+        const deliveryProfit = deliveryRevenue - deliveryCost;
+        const deliveryMargin = deliveryRevenue > 0 ? (deliveryProfit / deliveryRevenue) * 100 : 0;
 
-          const autoDeliverySaleData = {
-            items: [{
-              productId: item.productId,
-              productName: item.productName,
-              quantity: item.deliveredQuantity,
-              purchasePrice: item.productPurchasePrice,
-              salePrice: item.productSalePrice,
-              totalCost: deliveryCost, // ← Costo real del producto entregado
-              totalRevenue: 0, // ← No revenue adicional (ya se contó en abono)
-              profit: deliveryProfit // ← Ganancia real materializada
-            }],
-            subtotal: 0, // ← No revenue adicional
-            discount: 0,
-            tax: 0,
-            total: 0, // ← No dinero adicional (solo ganancia)
-            totalCost: deliveryCost, // ← Costo real
-            totalProfit: deliveryProfit, // ← Ganancia real materializada
-            profitMargin: deliveryMargin, // ← Margen real
-            paymentMethod: 'efectivo' as 'efectivo',
-            paymentMethods: [{ method: 'efectivo' as 'efectivo', amount: 0 }],
-            customerName: layaway.customerName,
-            customerId: layaway.customerId,
-            isLayaway: true,
-            layawayId: layaway.id,
-            type: 'layaway_delivery' as 'layaway_delivery', // Solo para tracking de entregas
-            notes: `✅ Entrega plan separe: ${item.deliveredQuantity} x ${item.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada`
-          };
-
-          await salesService.add(autoDeliverySaleData);
-        }
-      } catch (err) {
-        console.error('Error registrando ventas de entrega automática:', err);
+        ventas.push({
+          items: [{
+            productId: item.productId,
+            productName: item.productName,
+            quantity: item.deliveredQuantity,
+            purchasePrice: item.productPurchasePrice,
+            salePrice: item.productSalePrice,
+            totalCost: deliveryCost, // ← Costo real del producto entregado
+            totalRevenue: 0, // ← No revenue adicional (ya se contó en abono)
+            profit: deliveryProfit // ← Ganancia real materializada
+          }],
+          subtotal: 0, // ← No revenue adicional
+          discount: 0,
+          tax: 0,
+          total: 0, // ← No dinero adicional (solo ganancia)
+          totalCost: deliveryCost, // ← Costo real
+          totalProfit: deliveryProfit, // ← Ganancia real materializada
+          profitMargin: deliveryMargin, // ← Margen real
+          paymentMethod: 'efectivo',
+          paymentMethods: [{ method: 'efectivo', amount: 0 }],
+          customerName: actual.customerName,
+          customerId: actual.customerId,
+          isLayaway: true,
+          layawayId: actual.id,
+          type: 'layaway_delivery', // Solo para tracking de entregas
+          notes: `✅ Entrega plan separe: ${item.deliveredQuantity} x ${item.productName} (Valor: ${formatCurrency(deliveryRevenue)}) - Ganancia registrada`
+        });
       }
-    }
 
-    return {
-      updatedLayaway: {
-        ...layaway,
-        payments: updatedPayments.map(p => ({
-          ...p,
-          paymentMethod: (['efectivo', 'transferencia', 'tarjeta', 'crédito'].includes(p.paymentMethod) ? p.paymentMethod : 'efectivo') as 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito'
-        })),
-        remainingBalance: newRemainingBalance,
-        status: newStatus,
-        items: updatedItems,
-        updatedAt: new Date().toISOString()
-      },
-      newStatus,
-      creditUsed
-    };
+      return {
+        cambios,
+        ventas,
+        resultado: {
+          updatedLayaway: {
+            ...actual,
+            payments: updatedPayments,
+            remainingBalance: newRemainingBalance,
+            status: newStatus,
+            items: updatedItems,
+            updatedAt: new Date().toISOString()
+          },
+          newStatus,
+          creditUsed
+        }
+      };
+    });
   };
 
   const handleCreateLayaway = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -675,18 +670,27 @@ export function Layaway() {
 
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
-        // Actualizar crédito del cliente si se usó saldo a favor (ANTES de procesar el pago)
-        if (creditUsedCreate > 0 && customer) {
-          await customersService.update(customer.id, { credit: customer.credit - creditUsedCreate });
+        // El saldo a favor se descuenta contra el dato fresco, antes del pago.
+        const creditoDescontado = creditUsedCreate > 0 && customer ? creditUsedCreate : 0;
+        if (creditoDescontado > 0) {
+          await customersService.useCredit(customer.id, creditoDescontado);
         }
-        
-        await processPayment(
-          newLayaway,
-          downPayment,
-          allPaymentMethodsCreate,
-          creditUsedCreate,
-          'Pago inicial'
-        );
+
+        try {
+          await processPayment(
+            newLayaway,
+            downPayment,
+            allPaymentMethodsCreate,
+            creditUsedCreate,
+            'Pago inicial'
+          );
+        } catch (error) {
+          // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+          if (creditoDescontado > 0) {
+            await customersService.addCredit(customer.id, creditoDescontado);
+          }
+          throw error;
+        }
       }
       
       setShowCreateForm(false);
@@ -783,21 +787,29 @@ export function Layaway() {
           allPaymentMethods.push({ method: paymentMethod, amount: manualPayment, commission });
         }
       }
-      // Actualizar crédito en Firestore y local
-      if (creditUsed > 0 && customer) {
-        await customersService.update(customer.id, { credit: customer.credit - creditUsed });
-        // Actualizar localmente si tienes un método, por ejemplo:
-        // updateCustomerInState({ ...customer, credit: customer.credit - creditUsed });
+      // El saldo a favor se descuenta contra el dato fresco, antes del pago.
+      const creditoDescontado = creditUsed > 0 && customer ? creditUsed : 0;
+      if (creditoDescontado > 0 && customer) {
+        await customersService.useCredit(customer.id, creditoDescontado);
       }
 
       // Usar la función unificada para procesar el pago
-      const paymentResult = await processPayment(
-        selectedLayaway,
-        totalAmount,
-        allPaymentMethods,
-        creditUsed,
-        notes
-      );
+      let paymentResult;
+      try {
+        paymentResult = await processPayment(
+          selectedLayaway,
+          totalAmount,
+          allPaymentMethods,
+          creditUsed,
+          notes
+        );
+      } catch (error) {
+        // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+        if (creditoDescontado > 0 && customer) {
+          await customersService.addCredit(customer.id, creditoDescontado);
+        }
+        throw error;
+      }
 
       // Actualizar estado local inmediatamente
       updateLayawayInState(paymentResult.updatedLayaway);
@@ -816,7 +828,12 @@ export function Layaway() {
       dispatch(fetchLayaways());
     } catch (error) {
       console.error('Error adding payment:', error);
-      showError('Error al registrar pago', 'No se pudo registrar el pago. Inténtalo de nuevo.');
+      // El mensaje viaja tal cual: si el saldo cambio desde otro equipo o no
+      // alcanzo el saldo a favor, un "intentalo de nuevo" generico no lo dice.
+      showError(
+        'Error al registrar pago',
+        error instanceof Error && error.message ? error.message : 'No se pudo registrar el pago. Inténtalo de nuevo.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -2512,7 +2529,8 @@ export function Layaway() {
                     await layawaysService.addProductsToLayaway(
                       selectedLayaway.id,
                       newItems,
-                      additionalAmount
+                      additionalAmount,
+                      additionalCost
                     );
                     // Actualizar estado local
                     const updatedLayaway = {

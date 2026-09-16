@@ -526,6 +526,69 @@ async function reservarExistencias(
   });
 }
 
+/**
+ * Registra un pago sobre un plan separe o un servicio tecnico, junto con sus
+ * registros en ventas, en una sola transaccion.
+ *
+ * Antes el componente tomaba el documento que tenia en memoria, le agregaba
+ * el pago y reescribia el arreglo `payments` completo. Esas pantallas no
+ * escuchan cambios en vivo, asi que un segundo equipo con la pantalla abierta
+ * desde antes reescribia el arreglo sin el pago que acababa de registrar el
+ * primero: el pago desaparecia del plan aunque su venta quedara. Ademas la
+ * venta se guardaba aparte y, si fallaba, el error se tragaba y la caja no
+ * cuadraba con el plan.
+ *
+ * `construir` recibe el documento leido dentro de la transaccion y devuelve
+ * los cambios, las ventas a crear y lo que se le entrega al componente.
+ * Firestore puede reintentar la transaccion, asi que `construir` no debe
+ * tener efectos por fuera de lo que devuelve.
+ *
+ * Las ventas que se crean aqui son registros contables (abonos y entregas):
+ * no descuentan stock, igual que en salesService.add.
+ */
+export async function registrarPago<T, R>(
+  coleccion: typeof COLLECTIONS.LAYAWAYS | typeof COLLECTIONS.TECHNICAL_SERVICES,
+  id: string,
+  construir: (actual: T) => {
+    cambios: Record<string, unknown>;
+    ventas: Record<string, unknown>[];
+    resultado: R;
+  }
+): Promise<R> {
+  const ref = doc(db, coleccion, id);
+
+  const resultado = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      throw new Error('No se encontró el documento al que se le registra el pago');
+    }
+
+    const actual = { id: snap.id, ...cleanTimestamps(snap.data()) } as T;
+    const { cambios, ventas, resultado } = construir(actual);
+
+    for (const venta of ventas) {
+      const tipo = venta.type;
+      if (!tipo || tipo === 'regular') {
+        throw new Error('registrarPago solo crea registros contables, no ventas que descuenten stock');
+      }
+      tx.set(doc(collection(db, COLLECTIONS.SALES)), removeUndefined({
+        ...venta,
+        createdAt: getColombiaTimestamp()
+      }));
+    }
+
+    tx.update(ref, removeUndefined({
+      ...cambios,
+      updatedAt: getColombiaTimestamp()
+    }));
+
+    return resultado;
+  });
+
+  await waitForServerConfirmation();
+  return resultado;
+}
+
 export const salesService = {
   async getAll(): Promise<Sale[]> {
     const querySnapshot = await getDocs(
@@ -825,6 +888,42 @@ export const customersService = {
     });
   },
 
+  /**
+   * Descuenta saldo a favor verificandolo contra el dato fresco.
+   *
+   * Antes se escribia `credit: customer.credit - usado` con el cliente que
+   * estaba en memoria: dos cobros al mismo cliente (dos cajas, o una pantalla
+   * abierta desde antes) partian del mismo saldo y el segundo sobrescribia al
+   * primero, asi que el saldo se gastaba dos veces.
+   */
+  async useCredit(id: string, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    const customerRef = doc(db, COLLECTIONS.CUSTOMERS, id);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(customerRef);
+      if (!snap.exists()) {
+        throw new Error('Cliente no encontrado');
+      }
+      const disponible: number = snap.data().credit || 0;
+      if (disponible + 0.01 < amount) {
+        throw new Error(`Saldo a favor insuficiente: se piden ${amount}, hay ${disponible}`);
+      }
+      tx.update(customerRef, {
+        credit: Math.max(0, disponible - amount),
+        updatedAt: getColombiaTimestamp()
+      });
+    });
+  },
+
+  // Suma saldo a favor sin partir de una lectura previa.
+  async addCredit(id: string, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    await updateDoc(doc(db, COLLECTIONS.CUSTOMERS, id), {
+      credit: increment(amount),
+      updatedAt: getColombiaTimestamp()
+    });
+  },
+
   async delete(id: string): Promise<void> {
     await deleteDoc(doc(db, COLLECTIONS.CUSTOMERS, id));
   },
@@ -1010,41 +1109,30 @@ export const layawaysService = {
     console.log('✅ Plan separe actualizado exitosamente');
   },
 
-  // Función específica para agregar productos a un plan separe existente
-  async addProductsToLayaway(layawayId: string, newItems: any[], additionalAmount: number): Promise<void> {
+  /**
+   * Agrega productos a un plan separe existente y reserva su inventario en
+   * una sola transaccion.
+   *
+   * Antes se descontaba el stock en una transaccion y despues se guardaba el
+   * plan en otro commit: si el segundo fallaba, el stock quedaba descontado
+   * sin que el plan tuviera los productos. El plan ademas se leia fuera de la
+   * transaccion, y totalCost / expectedProfit no se guardaban (solo se
+   * actualizaban en la pantalla).
+   */
+  async addProductsToLayaway(
+    layawayId: string,
+    newItems: any[],
+    additionalAmount: number,
+    additionalCost = 0
+  ): Promise<void> {
     console.log('➕ Agregando productos al plan separe existente...', {
       layawayId,
       newItems,
       additionalAmount
     });
-    
-    const batch = writeBatch(db);
-    
-    // Get current layaway
+
     const layawayRef = doc(db, COLLECTIONS.LAYAWAYS, layawayId);
-    const layawayDoc = await getDoc(layawayRef);
-    
-    if (!layawayDoc.exists()) {
-      throw new Error('Plan separe no encontrado');
-    }
-    
-    const currentLayaway = layawayDoc.data() as LayawayPlan;
-    
-    // Update layaway with new items
-    const updatedItems = [...currentLayaway.items, ...newItems];
-    const updatedTotalAmount = currentLayaway.totalAmount + additionalAmount;
-    const updatedRemainingBalance = currentLayaway.remainingBalance + additionalAmount;
-    
-    batch.update(layawayRef, {
-      items: updatedItems,
-      totalAmount: updatedTotalAmount,
-      remainingBalance: updatedRemainingBalance,
-      updatedAt: getColombiaTimestamp()
-    });
-    
-    // Se verifican existencias antes de sumar los productos al plan.
-    console.log('📦 Reservando inventario para los productos nuevos...');
-    await reservarExistencias(
+    const porProducto = agruparPedidos(
       newItems.map(item => ({
         productId: item.productId,
         quantity: item.quantity,
@@ -1052,7 +1140,42 @@ export const layawaysService = {
       }))
     );
 
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      // Firestore exige que todas las lecturas ocurran antes de cualquier escritura.
+      const layawayDoc = await tx.get(layawayRef);
+      if (!layawayDoc.exists()) {
+        throw new Error('Plan separe no encontrado');
+      }
+
+      const existencias = new Map<string, number | null>();
+      for (const productId of porProducto.keys()) {
+        const snap = await tx.get(doc(db, COLLECTIONS.PRODUCTS, productId));
+        existencias.set(productId, snap.exists() ? (snap.data().stock ?? 0) : null);
+      }
+
+      const faltantes = faltantesDeStock(porProducto, existencias);
+      if (faltantes.length > 0) {
+        throw new StockInsuficienteError(faltantes);
+      }
+
+      const currentLayaway = layawayDoc.data() as LayawayPlan;
+      tx.update(layawayRef, {
+        items: [...(currentLayaway.items || []), ...newItems],
+        totalAmount: (currentLayaway.totalAmount || 0) + additionalAmount,
+        totalCost: (currentLayaway.totalCost || 0) + additionalCost,
+        expectedProfit: (currentLayaway.expectedProfit || 0) + (additionalAmount - additionalCost),
+        remainingBalance: (currentLayaway.remainingBalance || 0) + additionalAmount,
+        updatedAt: getColombiaTimestamp()
+      });
+
+      for (const [productId, { total }] of porProducto) {
+        tx.update(doc(db, COLLECTIONS.PRODUCTS, productId), {
+          stock: increment(-total),
+          updatedAt: getColombiaTimestamp()
+        });
+      }
+    });
+
     await waitForServerConfirmation();
     console.log('✅ Productos agregados al plan separe e inventario actualizado exitosamente');
   },
@@ -1334,6 +1457,66 @@ export const technicalServicesService = {
       console.error('❌ Error agregando pago al servicio técnico:', error);
       throw error;
     }
+  },
+
+  /**
+   * Quita del servicio tecnico el pago que corresponde a un registro de venta
+   * que se va a eliminar desde Gestion de Ventas.
+   *
+   * Antes solo se borraba la venta: el pago seguia en el servicio, el saldo
+   * pendiente no volvia a subir y el cliente figuraba con un pago que la caja
+   * ya no tenia. El registro de venta no guarda el id del pago, asi que se
+   * busca por monto; si hay varios iguales no se puede saber cual es y se
+   * prefiere no tocar nada (igual que con los abonos de plan separe).
+   */
+  async quitarPagoDeVenta(serviceId: string, monto: number): Promise<void> {
+    const serviceRef = doc(db, COLLECTIONS.TECHNICAL_SERVICES, serviceId);
+
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(serviceRef);
+      if (!snap.exists()) {
+        throw new Error('No se encontró el servicio técnico de este pago. No se eliminó nada para no descuadrar el servicio.');
+      }
+
+      const servicio = snap.data() as TechnicalService;
+      const pagos = servicio.payments || [];
+      const candidatos = pagos.filter(p => p.amount === monto);
+      if (candidatos.length === 0) {
+        throw new Error('No se encontró el pago correspondiente dentro del servicio técnico. No se eliminó nada.');
+      }
+      if (candidatos.length > 1) {
+        throw new Error(`El servicio técnico tiene ${candidatos.length} pagos por ese mismo monto y no se puede saber cuál corresponde. Elimínalo desde el servicio técnico.`);
+      }
+
+      // Misma cuenta que al cancelar un pago desde la pantalla de Servicio Técnico.
+      const pagosRestantes = pagos.filter(p => p.id !== candidatos[0].id);
+      const totalPagado = pagosRestantes.reduce((sum, p) => sum + p.amount, 0);
+      const nuevoSaldo = servicio.totalAmount - totalPagado;
+
+      const cambios: Record<string, unknown> = {
+        payments: pagosRestantes,
+        remainingBalance: nuevoSaldo,
+        updatedAt: getColombiaTimestamp()
+      };
+
+      if (servicio.status === 'completed' && nuevoSaldo > 0) {
+        cambios.status = 'active';
+        cambios.items = (servicio.items || []).map(item => {
+          const historialManual = (item.pickedUpHistory || []).filter(
+            pickup => pickup.notes !== 'Marcado automáticamente como recogido al completar el pago'
+          );
+          return {
+            ...item,
+            pickedUpQuantity: historialManual.reduce((sum, pickup) => sum + pickup.quantity, 0),
+            pickedUpHistory: historialManual
+          };
+        });
+      }
+
+      tx.update(serviceRef, removeUndefined(cambios));
+    });
+
+    await waitForServerConfirmation();
   },
 
   async delete(id: string): Promise<void> {

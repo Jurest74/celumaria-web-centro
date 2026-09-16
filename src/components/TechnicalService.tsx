@@ -3,7 +3,7 @@ import { Plus, Search, Calendar, DollarSign, User, Package, Eye, CheckCircle, Cl
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import { selectTechnicalServices, selectCustomers } from '../store/selectors';
-import { technicalServicesService, courtesiesService } from '../services/firebase/firestore';
+import { technicalServicesService, courtesiesService, registrarPago } from '../services/firebase/firestore';
 import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, PaymentMethod, Technician } from '../types';
 import { formatCurrency, formatNumberInput, parseNumberInput } from '../utils/currency';
@@ -441,12 +441,32 @@ export function TechnicalService() {
           // Add to customer credit
           const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
           if (customer) {
-            const { customersService } = await import('../services/firebase/firestore');
-            await customersService.update(customer.id, {
-              credit: (customer.credit || 0) + overpayment,
+            // El sobrepago sale del servicio con un pago negativo, igual que un
+            // reembolso. Sin esto el servicio seguia sobrepagado, el boton
+            // "Reajustar" seguia disponible y cada clic volvia a sumar el mismo
+            // dinero al saldo del cliente. Primero se cierra el sobrepago y
+            // despues se acredita: si lo segundo falla, no queda duplicado.
+            const creditPayment = {
+              id: crypto.randomUUID(),
+              amount: -overpayment,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              paymentMethods: [{ method: 'credit' as const, amount: -overpayment }],
+              notes: `Sobrepago convertido en saldo a favor`
+            };
+
+            const updatedService = {
+              ...selectedTechnicalService,
+              payments: [...selectedTechnicalService.payments, creditPayment],
               updatedAt: getColombiaTimestamp()
-            });
-            
+            };
+
+            await technicalServicesService.update(selectedTechnicalService.id, updatedService);
+            updateTechnicalServiceInState(updatedService);
+            setSelectedTechnicalService(updatedService);
+
+            await customersService.addCredit(customer.id, overpayment);
+
             showSuccess(
               'Saldo agregado',
               `Se agregó ${formatCurrency(overpayment)} al saldo a favor de ${customer.name}`
@@ -510,21 +530,29 @@ export function TechnicalService() {
       };
 
       // Handle overpayment if exists
+      let creditoPorAcreditar: { customerId: string; customerName: string; amount: number } | null = null;
       if (overpayment > 0.01) {
         if (overpaymentAction === 'credit') {
           // Add to customer credit
           const customer = customers.find(c => c.id === selectedTechnicalService.customerId);
           if (customer) {
-            const { customersService } = await import('../services/firebase/firestore');
-            await customersService.update(customer.id, {
-              credit: (customer.credit || 0) + overpayment,
-              updatedAt: getColombiaTimestamp()
-            });
-            
-            showSuccess(
-              'Saldo agregado',
-              `Se agregó ${formatCurrency(overpayment)} al saldo a favor de ${customer.name}`
-            );
+            // Igual que en el reajuste: el sobrepago sale del servicio con un
+            // pago negativo, o quedaria disponible para acreditarse otra vez.
+            // El saldo se suma despues de guardar el servicio.
+            const creditPayment = {
+              id: crypto.randomUUID(),
+              amount: -overpayment,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              paymentMethods: [{ method: 'credit' as const, amount: -overpayment }],
+              notes: `Sobrepago por eliminación de repuesto convertido en saldo a favor: ${partToDelete.name}`
+            };
+
+            updatedService = {
+              ...updatedService,
+              payments: [...selectedTechnicalService.payments, creditPayment]
+            };
+            creditoPorAcreditar = { customerId: customer.id, customerName: customer.name, amount: overpayment };
           }
         } else if (overpaymentAction === 'refund') {
           // Create a negative payment to represent the refund
@@ -550,6 +578,14 @@ export function TechnicalService() {
       
       // Update in Firebase
       await technicalServicesService.update(selectedTechnicalService.id, updatedService);
+
+      if (creditoPorAcreditar) {
+        await customersService.addCredit(creditoPorAcreditar.customerId, creditoPorAcreditar.amount);
+        showSuccess(
+          'Saldo agregado',
+          `Se agregó ${formatCurrency(creditoPorAcreditar.amount)} al saldo a favor de ${creditoPorAcreditar.customerName}`
+        );
+      }
       
       // Update local state
       updateTechnicalServiceInState(updatedService);
@@ -838,33 +874,45 @@ export function TechnicalService() {
       registeredAt: getColombiaTimestamp()
     };
 
-    const newRemainingBalance = technicalService.remainingBalance - totalAmount;
-    // Don't automatically change status to completed, keep it as active until manually closed
-    const newStatus = technicalService.status;
-    
-    // Actualizar en Firebase
-    const updatedPayments = [...technicalService.payments, newPayment];
-    const updateData: any = {
-      payments: updatedPayments.map(p => ({
+    // El servicio y su registro en ventas se guardan en una sola transaccion,
+    // calculados sobre el servicio tal como esta en Firestore y no sobre la
+    // copia de la pantalla (ver registrarPago).
+    return registrarPago<TechnicalServicePlan, {
+      updatedTechnicalService: TechnicalServicePlan;
+      newStatus: TechnicalServicePlan['status'];
+      creditUsed: number;
+    }>(COLLECTIONS.TECHNICAL_SERVICES, technicalService.id, (actual) => {
+      // Si otro equipo registro un pago mientras tanto, el saldo de la
+      // pantalla ya no es el real: se rechaza en vez de sobrepagar.
+      const { remainingBalance: saldoReal } = calculateRealTotals(actual);
+      if (totalAmount > saldoReal + 0.01) {
+        throw new Error(
+          `El saldo pendiente del servicio cambió (ahora es ${formatCurrency(saldoReal)}), ` +
+          'probablemente porque se registró otro pago desde otro equipo. Recarga el servicio y vuelve a intentar.'
+        );
+      }
+
+      const newRemainingBalance = actual.remainingBalance - totalAmount;
+      // Don't automatically change status to completed, keep it as active until manually closed
+      const newStatus = actual.status;
+
+      const updatedPayments = [...(actual.payments || []), newPayment].map(p => ({
         ...p,
         paymentMethod: (['efectivo', 'transferencia', 'tarjeta', 'crédito'].includes(p.paymentMethod) ? p.paymentMethod : 'efectivo') as 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito'
-      })),
-      remainingBalance: newRemainingBalance,
-      status: newStatus
-    };
-    
-    // completedAt will be set when service is manually closed
-    
-    await technicalServicesService.update(technicalService.id, updateData);
+      }));
 
-    // **NUEVA FUNCIONALIDAD: Registrar el abono como una venta**
-    try {
-      const { salesService } = await import('../services/firebase/firestore');
-      
+      // completedAt will be set when service is manually closed
+      const cambios: Record<string, unknown> = {
+        payments: updatedPayments,
+        remainingBalance: newRemainingBalance,
+        status: newStatus
+      };
+
+      // **Registrar el abono como una venta**
       // Calcular la ganancia real basada en la proporción del servicio técnico
-      const serviceTotalCost = technicalService.items?.reduce((sum: number, item: any) => sum + (item.partCost * item.quantity), 0) || 0;
-      const serviceLaborCost = technicalService.laborCost || 0;
-      const serviceTotal = technicalService.total || (serviceTotalCost + serviceLaborCost);
+      const serviceTotalCost = actual.items?.reduce((sum: number, item: any) => sum + (item.partCost * item.quantity), 0) || 0;
+      const serviceLaborCost = actual.laborCost || 0;
+      const serviceTotal = actual.total || (serviceTotalCost + serviceLaborCost);
       
       // Calcular la ganancia proporcional al pago:
       // Si es pago parcial, la ganancia es proporcional a la parte de mano de obra que le corresponde al negocio
@@ -877,8 +925,6 @@ export function TechnicalService() {
       const realCost = totalAmount - realProfit;
       const realMargin = totalAmount > 0 ? (realProfit / totalAmount) * 100 : 0;
 
-
-      // Crear datos de venta para el abono
       const saleData = {
         items: [], // Los servicios técnicos no tienen productos específicos en la venta del abono
         subtotal: totalAmount,
@@ -897,57 +943,44 @@ export function TechnicalService() {
           commission: pm.commission || 0
         })),
         useMultiplePayments: allPaymentMethods.length > 1,
-        totalCommissions: allPaymentMethods.reduce((sum, pm) => sum + (pm.commission || 0), 0),
-        customerName: technicalService.customerName,
-        customerId: technicalService.customerId,
+        totalCommissions: comisionesDelAbono,
+        customerName: actual.customerName,
+        customerId: actual.customerId,
         salesPersonId: appUser?.uid,
         salesPersonName: appUser?.displayName || appUser?.email,
-        technicalServiceId: technicalService.id, // Referencia al servicio técnico
-        type: 'technical_service_payment' as any, // Tipo para servicios técnicos
-        notes: `💻 Pago servicio técnico: ${technicalService.deviceBrandModel || 'Dispositivo'} - Cliente: ${technicalService.customerName}${notes ? ` - ${notes}` : ''}`,
+        technicalServiceId: actual.id, // Referencia al servicio técnico
+        type: 'technical_service_payment', // Tipo para servicios técnicos
+        notes: `💻 Pago servicio técnico: ${actual.deviceBrandModel || 'Dispositivo'} - Cliente: ${actual.customerName}${notes ? ` - ${notes}` : ''}`,
         // Información adicional del servicio técnico para mostrar en detalles
         technicalServiceDetails: {
-          ...(technicalService.deviceBrandModel && { deviceBrandModel: technicalService.deviceBrandModel }),
-          ...(technicalService.deviceImei && { deviceImei: technicalService.deviceImei }),
-          ...(technicalService.reportedIssue && { reportedIssue: technicalService.reportedIssue }),
-          ...(technicalService.technicianName && { technicianName: technicalService.technicianName }),
-          ...(technicalService.status && { status: technicalService.status }),
-          ...(technicalService.total !== undefined && { total: technicalService.total }),
-          ...(technicalService.remainingBalance !== undefined && { remainingBalance: technicalService.remainingBalance - totalAmount }),
-          ...(technicalService.estimatedCompletionDate && { estimatedCompletionDate: technicalService.estimatedCompletionDate })
+          ...(actual.deviceBrandModel && { deviceBrandModel: actual.deviceBrandModel }),
+          ...(actual.deviceImei && { deviceImei: actual.deviceImei }),
+          ...(actual.reportedIssue && { reportedIssue: actual.reportedIssue }),
+          ...(actual.technicianName && { technicianName: actual.technicianName }),
+          ...(actual.status && { status: actual.status }),
+          ...(actual.total !== undefined && { total: actual.total }),
+          ...(actual.remainingBalance !== undefined && { remainingBalance: newRemainingBalance }),
+          ...(actual.estimatedCompletionDate && { estimatedCompletionDate: actual.estimatedCompletionDate })
         },
-        createdAt: getColombiaTimestamp(),
         updatedAt: getColombiaTimestamp()
       };
 
-      await salesService.add(saleData);
-      console.log('💻 Abono de servicio técnico registrado como venta:', {
-        type: saleData.type,
-        salesPersonId: saleData.salesPersonId,
-        salesPersonName: saleData.salesPersonName,
-        total: saleData.total,
-        createdAt: saleData.createdAt,
-        technicalServiceId: saleData.technicalServiceId
-      });
-    } catch (saleError) {
-      console.error('Error registrando abono como venta:', saleError);
-      // No lanzamos el error para que no falle todo el proceso
-    }
-
-    return {
-      updatedTechnicalService: {
-        ...technicalService,
-        payments: updatedPayments.map(p => ({
-          ...p,
-          paymentMethod: (['efectivo', 'transferencia', 'tarjeta', 'crédito'].includes(p.paymentMethod) ? p.paymentMethod : 'efectivo') as 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito'
-        })),
-        remainingBalance: newRemainingBalance,
-        status: newStatus,
-        updatedAt: getColombiaTimestamp()
-      },
-      newStatus,
-      creditUsed
-    };
+      return {
+        cambios,
+        ventas: [saleData],
+        resultado: {
+          updatedTechnicalService: {
+            ...actual,
+            payments: updatedPayments,
+            remainingBalance: newRemainingBalance,
+            status: newStatus,
+            updatedAt: getColombiaTimestamp()
+          },
+          newStatus,
+          creditUsed
+        }
+      };
+    });
   };
 
   const handleCreateLayaway = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -1171,18 +1204,27 @@ export function TechnicalService() {
 
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
-        // Actualizar crédito del cliente si se usó saldo a favor (ANTES de procesar el pago)
-        if (creditUsedCreate > 0 && customer) {
-          await customersService.update(customer.id, { credit: customer.credit - creditUsedCreate });
+        // El saldo a favor se descuenta contra el dato fresco, antes del pago.
+        const creditoDescontado = creditUsedCreate > 0 && customer ? creditUsedCreate : 0;
+        if (creditoDescontado > 0) {
+          await customersService.useCredit(customer.id, creditoDescontado);
         }
-        
-        await processPayment(
-          newTechnicalService,
-          downPayment,
-          allPaymentMethodsCreate,
-          creditUsedCreate,
-          'Pago inicial'
-        );
+
+        try {
+          await processPayment(
+            newTechnicalService,
+            downPayment,
+            allPaymentMethodsCreate,
+            creditUsedCreate,
+            'Pago inicial'
+          );
+        } catch (error) {
+          // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+          if (creditoDescontado > 0) {
+            await customersService.addCredit(customer.id, creditoDescontado);
+          }
+          throw error;
+        }
       }
 
       // Registrar cortesías en la colección de courtesies
@@ -1327,21 +1369,29 @@ export function TechnicalService() {
           allPaymentMethods.push({ method: paymentMethod, amount: manualPayment, commission });
         }
       }
-      // Actualizar crédito en Firestore y local
-      if (creditUsed > 0 && customer) {
-        await customersService.update(customer.id, { credit: customer.credit - creditUsed });
-        // Actualizar localmente si tienes un método, por ejemplo:
-        // updateCustomerInState({ ...customer, credit: customer.credit - creditUsed });
+      // El saldo a favor se descuenta contra el dato fresco, antes del pago.
+      const creditoDescontado = creditUsed > 0 && customer ? creditUsed : 0;
+      if (creditoDescontado > 0 && customer) {
+        await customersService.useCredit(customer.id, creditoDescontado);
       }
 
       // Usar la función unificada para procesar el pago
-      const paymentResult = await processPayment(
-        selectedTechnicalService,
-        totalAmount,
-        allPaymentMethods,
-        creditUsed,
-        notes
-      );
+      let paymentResult;
+      try {
+        paymentResult = await processPayment(
+          selectedTechnicalService,
+          totalAmount,
+          allPaymentMethods,
+          creditUsed,
+          notes
+        );
+      } catch (error) {
+        // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+        if (creditoDescontado > 0 && customer) {
+          await customersService.addCredit(customer.id, creditoDescontado);
+        }
+        throw error;
+      }
 
       // Actualizar estado local inmediatamente
       updateTechnicalServiceInState(paymentResult.updatedTechnicalService);
@@ -1360,7 +1410,12 @@ export function TechnicalService() {
       dispatch(fetchTechnicalServices());
     } catch (error) {
       console.error('Error adding payment:', error);
-      showError('Error al registrar pago', 'No se pudo registrar el pago. Inténtalo de nuevo.');
+      // El mensaje viaja tal cual: si el saldo cambio desde otro equipo o no
+      // alcanzo el saldo a favor, un "intentalo de nuevo" generico no lo dice.
+      showError(
+        'Error al registrar pago',
+        error instanceof Error && error.message ? error.message : 'No se pudo registrar el pago. Inténtalo de nuevo.'
+      );
     } finally {
       setIsLoading(false);
     }

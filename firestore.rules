@@ -12,14 +12,19 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    // Users collection - users can read their own document, only they can update it
-    // Only admins can read other users or manage user roles
+    // Users collection - users can read their own document.
+    // Rol, permisos y estado solo los asigna un admin. Antes un usuario podia
+    // crear o editar su propio documento sin restriccion y escribirse
+    // role: 'admin' desde la consola del navegador. Los usuarios los crea un
+    // admin desde Gestion de Usuarios (documento con el uid de otra persona).
     match /users/{userId} {
-      allow read: if isAuthenticated() && 
+      allow read: if isAuthenticated() &&
         (request.auth.uid == userId || isAdmin());
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() && 
-        (request.auth.uid == userId || isAdmin());
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isAuthenticated() && request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['role', 'permissions', 'isActive', 'uid', 'email']));
       allow delete: if isAdmin();
     }
     

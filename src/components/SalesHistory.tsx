@@ -402,6 +402,29 @@ export function SalesHistory() {
           setIsProcessing(false);
           return;
         }
+      } else if (
+        deleteModal?.saleData?.type === 'technical_service_payment' &&
+        (deleteModal.saleData as Sale & { technicalServiceId?: string }).technicalServiceId
+      ) {
+        // Igual que con los abonos de plan separe: antes de borrar la venta se
+        // quita el pago del servicio tecnico. Antes solo se borraba la venta y
+        // el servicio seguia mostrando el pago y un saldo pendiente menor.
+        try {
+          const { technicalServicesService } = await import('../services/firebase/firestore');
+          await technicalServicesService.quitarPagoDeVenta(
+            (deleteModal.saleData as Sale & { technicalServiceId: string }).technicalServiceId,
+            deleteModal.saleData.total
+          );
+        } catch (err) {
+          console.error('Error eliminando pago en servicio técnico:', err);
+          showNotification(
+            'error',
+            'No se eliminó la venta',
+            (err instanceof Error && err.message) || 'No se pudo actualizar el servicio técnico, así que la venta no se eliminó para no dejar los datos descuadrados.'
+          );
+          setIsProcessing(false);
+          return;
+        }
       }
       await dispatch(deleteSale(deleteModal.saleId)).unwrap();
       // Cerrar modal de detalles si está abierto
