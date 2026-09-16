@@ -17,6 +17,7 @@ import {
   ArrowUpRight
 } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
+import { useFirebase } from '../contexts/FirebaseContext';
 import { selectCustomers, selectSales } from '../store/selectors';
 import { customersService, compromisosActivosDeCliente } from '../services/firebase/firestore';
 import { usePaginatedCustomers } from '../hooks/usePaginatedCustomers';
@@ -61,6 +62,22 @@ export function Customers() {
   const itemsPerPage = 10;
 
   const formRef = useRef<HTMLFormElement>(null);
+
+  // El filtro por ventas de los ultimos 30 dias cuenta sobre las ventas del
+  // store, pero al entrar a esta pantalla solo se cargan clientes: el conteo
+  // daba cero para todos, asi que elegir alto, medio o bajo devolvia la lista
+  // vacia y "ninguno" devolvia todo. Las ventas se piden la primera vez que se
+  // usa el filtro, para no pagarlas en la entrada normal a la pantalla.
+  const firebase = useFirebase();
+  const ventasPedidas = useRef(false);
+  const [cargandoVentas, setCargandoVentas] = useState(false);
+
+  useEffect(() => {
+    if (salesFilter === 'all' || ventasPedidas.current) return;
+    ventasPedidas.current = true;
+    setCargandoVentas(true);
+    firebase.loadSales().finally(() => setCargandoVentas(false));
+  }, [salesFilter, firebase]);
 
   // Helper function to calculate sales count for last 30 days per customer
   const getSalesCountForCustomer = useCallback((customerId: string) => {
@@ -433,6 +450,9 @@ export function Customers() {
                 <option value="low">Bajas (1)</option>
                 <option value="none">Sin ventas (0)</option>
               </select>
+              {cargandoVentas && (
+                <span className="text-xs text-gray-500">Cargando ventas…</span>
+              )}
             </div>
           </div>
         </div>

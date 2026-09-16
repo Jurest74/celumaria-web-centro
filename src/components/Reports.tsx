@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BarChart3, TrendingUp, PieChart, LineChart, DollarSign, Target } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
+import { useFirebase } from '../contexts/FirebaseContext';
 import { selectProducts } from '../store/selectors';
 import { useSalesStats } from '../hooks/useSalesStats';
 import { formatCurrency, formatNumber } from '../utils/currency';
@@ -20,6 +21,18 @@ import {
 } from 'recharts';
 export function Reports() {
   const products = useAppSelector(selectProducts);
+
+  // Esta pantalla no carga productos al entrar (useOnDemandData los deja a
+  // cargo de cada componente), y el grafico de inventario inmovilizado se
+  // calcula sobre ellos: sin esto mostraba "sin datos" en vez del inventario.
+  const firebase = useFirebase();
+  useEffect(() => {
+    if (products.length === 0) {
+      firebase.loadProducts();
+    }
+    // Solo al montar: si de verdad no hay productos, no tiene sentido reintentar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Usar el mismo hook que SalesHistory para totales
   const [dateFilter] = React.useState('custom');
   const [customDateRange, setCustomDateRange] = React.useState(() => ({
