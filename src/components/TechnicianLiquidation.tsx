@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { DollarSign, Clock, CheckCircle, Search } from 'lucide-react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, orderBy, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, orderBy, runTransaction } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
 import { bogotaDateKey, subtractDaysBogota } from '../utils/dateUtils';
+import { montosLiquidacion } from '../utils/liquidacion';
 
 export function TechnicianLiquidationComponent() {
   const { showSuccess, showError, showWarning } = useNotification();
@@ -209,13 +210,7 @@ export function TechnicianLiquidationComponent() {
         };
       }
       
-      // Calcular valores usando el nuevo sistema
-      const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
-      const serviceCost = service.serviceCost || 0;
-      // Si no hay repuestos, toda la mano de obra es el serviceCost
-      // Si hay repuestos, la mano de obra es serviceCost - partsCost
-      const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
-      const technicianShare = service.technicianShare || (laborCost * 0.5);
+      const { laborCost, technicianShare } = montosLiquidacion(service);
       
       acc[service.technicianId].services.push(service);
       acc[service.technicianId].totalLaborCost += laborCost;
@@ -270,70 +265,75 @@ export function TechnicianLiquidationComponent() {
       
       let omitidos = 0;
 
-      // Crear liquidación para cada técnico
+      // Una transaccion por tecnico: se releen los servicios, se crea la
+      // liquidacion y se marcan los servicios en el mismo commit.
+      //
+      // Antes la liquidacion se creaba primero y los servicios se marcaban
+      // despues, uno por uno. Si algo fallaba a mitad, los servicios sin marcar
+      // volvian a salir como pendientes y se liquidaban otra vez; y si dos
+      // personas liquidaban al tiempo, las dos veian los servicios sin
+      // liquidar. Dentro de la transaccion, la segunda ve el liquidationId y
+      // los omite.
       for (const group of groupedServicesForLiquidation) {
-        // Se relee en Firestore antes de pagar: un servicio que ya tiene
-        // liquidationId no se vuelve a liquidar. Cubre el reintento de una
-        // corrida que murió a medias y el listener local desactualizado.
-        const porLiquidar: TechnicalService[] = [];
-        for (const service of group.services) {
-          const snap = await getDoc(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id));
-          if (snap.exists() && !snap.data().liquidationId) {
-            porLiquidar.push(service);
-          } else {
-            omitidos += 1;
+        const liquidationRef = doc(collection(db, COLLECTIONS.TECHNICIAN_LIQUIDATIONS));
+
+        const omitidosGrupo = await runTransaction(db, async (tx) => {
+          const porLiquidar: TechnicalService[] = [];
+          for (const service of group.services) {
+            const snap = await tx.get(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id));
+            if (!snap.exists()) continue;
+            const actual = { ...snap.data(), id: snap.id } as TechnicalService;
+            if (actual.liquidationId || actual.status !== 'completed' || actual.technicianId !== group.technicianId) {
+              continue;
+            }
+            porLiquidar.push(actual);
           }
-        }
-        if (porLiquidar.length === 0) continue;
+          if (porLiquidar.length === 0) return group.services.length;
 
-        const detalle = porLiquidar.map(service => {
-          const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
-          const serviceCost = service.serviceCost || 0;
-          // Si no hay repuestos, toda la mano de obra es el serviceCost
-          // Si hay repuestos, la mano de obra es serviceCost - partsCost
-          const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
-          const technicianShare = service.technicianShare || (laborCost * 0.5);
+          // Montos sobre el servicio guardado, con su precio y repuestos actuales.
+          const detalle = porLiquidar.map(service => {
+            const montos = montosLiquidacion(service);
+            return {
+              serviceId: service.id,
+              serviceCost: montos.serviceCost,
+              partsCost: montos.partsCost,
+              laborCost: montos.laborCost,
+              technicianShare: montos.technicianShare,
+              customerName: service.customerName,
+              deviceBrandModel: service.deviceBrandModel,
+              completedAt: service.completedAt || now
+            };
+          });
 
-          return {
-            serviceId: service.id,
-            serviceCost: serviceCost,
-            partsCost: partsCost,
-            laborCost: laborCost,
-            technicianShare: technicianShare,
-            customerName: service.customerName,
-            deviceBrandModel: service.deviceBrandModel,
-            completedAt: service.completedAt || now
+          const liquidationData: Omit<TechnicianLiquidation, 'id'> = {
+            technicianId: group.technicianId,
+            technicianName: porLiquidar[0].technicianName || group.technicianName,
+            services: detalle,
+            // Totales sobre lo que realmente se liquida, no sobre lo seleccionado.
+            totalLaborCost: detalle.reduce((sum, s) => sum + s.laborCost, 0),
+            totalTechnicianShare: detalle.reduce((sum, s) => sum + s.technicianShare, 0),
+            status: 'completed',
+            createdAt: now,
+            notes: liquidationNotes
           };
+
+          tx.set(liquidationRef, JSON.parse(JSON.stringify(liquidationData)));
+          for (const service of porLiquidar) {
+            tx.update(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id), {
+              liquidationId: liquidationRef.id,
+              liquidatedAt: now
+            });
+          }
+          return group.services.length - porLiquidar.length;
         });
 
-        const liquidationData: Omit<TechnicianLiquidation, 'id'> = {
-          technicianId: group.technicianId,
-          technicianName: group.technicianName,
-          services: detalle,
-          // Totales sobre lo que realmente se liquida, no sobre lo seleccionado.
-          totalLaborCost: detalle.reduce((sum, s) => sum + s.laborCost, 0),
-          totalTechnicianShare: detalle.reduce((sum, s) => sum + s.technicianShare, 0),
-          status: 'completed',
-          createdAt: now,
-          notes: liquidationNotes
-        };
-
-        // Crear la liquidación
-        const liquidationRef = await addDoc(collection(db, COLLECTIONS.TECHNICIAN_LIQUIDATIONS), liquidationData);
-
-        // Actualizar los servicios con el ID de liquidación
-        for (const service of porLiquidar) {
-          await updateDoc(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id), {
-            liquidationId: liquidationRef.id,
-            liquidatedAt: now
-          });
-        }
+        omitidos += omitidosGrupo;
       }
 
       showSuccess(
         'Liquidaciones creadas',
         omitidos > 0
-          ? `Las liquidaciones se crearon exitosamente. Se omitieron ${omitidos} servicio(s) que ya estaban liquidados.`
+          ? `Las liquidaciones se crearon exitosamente. Se omitieron ${omitidos} servicio(s) que ya estaban liquidados o que cambiaron de estado o de técnico.`
           : 'Las liquidaciones se crearon exitosamente'
       );
       
@@ -342,8 +342,10 @@ export function TechnicianLiquidationComponent() {
       setLiquidationNotes('');
       setShowLiquidationModal(false);
     } catch (error) {
+      // Cada técnico va en su propia transacción: las que terminaron antes del
+      // error quedaron completas y las demás no dejaron nada a medias.
       console.error('Error creating liquidations:', error);
-      showError('Error al crear las liquidaciones', 'No se pudieron crear las liquidaciones. Revisa e inténtalo de nuevo.');
+      showError('Error al crear las liquidaciones', 'No se pudieron crear todas las liquidaciones. Las que alcanzaron a crearse quedaron completas; revisa el historial e inténtalo de nuevo con las que faltan.');
     } finally {
       setLoading(false);
     }
@@ -619,9 +621,7 @@ export function TechnicianLiquidationComponent() {
                           {/* Labor Cost */}
                           <div className="col-span-1 text-center">
                             {(() => {
-                              const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
-                              const serviceCost = service.serviceCost || 0;
-                              const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
+                              const { laborCost } = montosLiquidacion(service);
                               return (
                                 <>
                                   <div className="font-medium text-blue-600">
@@ -636,10 +636,7 @@ export function TechnicianLiquidationComponent() {
                           {/* Technician Share */}
                           <div className="col-span-2 text-center">
                             {(() => {
-                              const partsCost = service.items?.reduce((sum, item) => sum + item.totalCost, 0) || 0;
-                              const serviceCost = service.serviceCost || 0;
-                              const laborCost = service.laborCost || (partsCost === 0 ? serviceCost : Math.max(0, serviceCost - partsCost));
-                              const technicianShare = service.technicianShare || (laborCost * 0.5);
+                              const { technicianShare } = montosLiquidacion(service);
                               return (
                                 <>
                                   <div className="font-bold text-green-600 text-lg">
@@ -780,7 +777,7 @@ export function TechnicianLiquidationComponent() {
                           {group.services.map((service) => (
                             <div key={service.id} className="flex justify-between items-center p-1 bg-gray-50 rounded">
                               <span>{service.customerName} - {service.deviceBrandModel}</span>
-                              <span className="font-medium">{formatCurrency(service.technicianShare || 0)}</span>
+                              <span className="font-medium">{formatCurrency(montosLiquidacion(service).technicianShare)}</span>
                             </div>
                           ))}
                         </div>

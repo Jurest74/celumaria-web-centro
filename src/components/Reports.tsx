@@ -1,3 +1,4 @@
+import { bogotaDateKey, bogotaHour, startOfMonthKeyBogota } from '../utils/dateUtils';
 import React, { useEffect } from 'react';
 import { BarChart3, TrendingUp, PieChart, LineChart, DollarSign, Target } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
@@ -35,16 +36,12 @@ export function Reports() {
   }, []);
   // Usar el mismo hook que SalesHistory para totales
   const [dateFilter] = React.useState('custom');
+  // Mes en curso según el calendario Colombia. Antes se tomaba la fecha en
+  // UTC: desde las 7 p. m. de Colombia ya era el día siguiente en UTC, así que
+  // el rango arrancaba el día 2 y dejaba por fuera las ventas del día 1.
   const [customDateRange, setCustomDateRange] = React.useState(() => ({
-    startDate: (() => {
-      const d = new Date();
-      d.setDate(1); // Primer día del mes actual
-      return d.toISOString().slice(0, 10);
-    })(),
-    endDate: (() => {
-      const d = new Date();
-      return d.toISOString().slice(0, 10);
-    })()
+    startDate: startOfMonthKeyBogota(),
+    endDate: bogotaDateKey()
   }));
   const {
     totalSales,
@@ -214,7 +211,8 @@ export function Reports() {
         }
         
         if (!isNaN(dateObj.getTime())) {
-          const hour = dateObj.getHours();
+          // Hora Colombia, no la del navegador.
+          const hour = bogotaHour(dateObj);
           hourCounts[hour].count++;
         }
       }
@@ -320,7 +318,9 @@ export function Reports() {
         }
         
         if (!isNaN(dateObj.getTime())) {
-          const dateKey = dateObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', month: 'short', day: 'numeric' });
+          // Se agrupa por día calendario Colombia ("YYYY-MM-DD", que ordena
+          // bien como texto) y la etiqueta se arma al final.
+          const dateKey = bogotaDateKey(dateObj);
           
           if (!salesByDate[dateKey]) {
             salesByDate[dateKey] = { revenue: 0, cost: 0, profit: 0, transactions: 0 };
@@ -336,13 +336,11 @@ export function Reports() {
     
     // Convertir a array y ordenar por fecha
     return Object.entries(salesByDate)
-      .map(([date, data]) => ({ date, ...data }))
-      .sort((a, b) => {
-        // Ordenar por fecha real, no por string
-        const dateA = new Date(a.date + ', ' + new Date().getFullYear());
-        const dateB = new Date(b.date + ', ' + new Date().getFullYear());
-        return dateA.getTime() - dateB.getTime();
-      });
+      .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+      .map(([key, data]) => ({
+        date: new Date(`${key}T12:00:00.000-05:00`).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', month: 'short', day: 'numeric' }),
+        ...data
+      }));
   }, [filteredSales]);
 
   // Resumen de rentabilidad diaria - usar datos reales agrupados por día
@@ -362,7 +360,7 @@ export function Reports() {
         }
         
         if (!isNaN(dateObj.getTime())) {
-          const dateKey = dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
+          const dateKey = bogotaDateKey(dateObj); // YYYY-MM-DD en Colombia
           
           if (!salesByDate[dateKey]) {
             salesByDate[dateKey] = { revenue: 0, cost: 0, profit: 0, transactions: 0 };
@@ -451,7 +449,7 @@ export function Reports() {
             className="ml-2 border rounded px-2 py-1"
             value={customDateRange.endDate}
             min={customDateRange.startDate}
-            max={new Date().toISOString().slice(0, 10)}
+            max={bogotaDateKey()}
             onChange={e => handleDateChange('endDate', e.target.value)}
           />
         </label>

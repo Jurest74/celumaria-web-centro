@@ -441,6 +441,41 @@ export const productsService = {
     await batch.commit();
   },
 
+  /**
+   * Fija el stock de un producto a un conteo manual, solo si nadie lo movió
+   * desde que se abrió el formulario.
+   *
+   * Antes editar un producto escribía siempre el stock que mostraba el
+   * formulario, aunque solo se cambiara el precio: una venta hecha mientras
+   * el formulario estaba abierto desaparecía del inventario, y como el valor
+   * "no cambiaba" tampoco quedaba registro en la auditoría.
+   *
+   * Devuelve el stock que había justo antes del ajuste.
+   */
+  async ajustarStock(productId: string, stockEsperado: number, stockNuevo: number): Promise<number> {
+    const productRef = doc(db, COLLECTIONS.PRODUCTS, productId);
+    const anterior = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(productRef);
+      if (!snap.exists()) {
+        throw new Error('El producto ya no existe.');
+      }
+      const actual = Number(snap.data().stock || 0);
+      if (actual !== stockEsperado) {
+        throw new Error(
+          `El stock de este producto cambió mientras lo editabas (ahora hay ${actual}, ` +
+          'probablemente por una venta). No se guardó nada: cierra el formulario, ábrelo de nuevo y revisa el conteo.'
+        );
+      }
+      tx.update(productRef, {
+        stock: stockNuevo,
+        updatedAt: getColombiaTimestamp()
+      });
+      return actual;
+    });
+    await waitForServerConfirmation();
+    return anterior;
+  },
+
   // Update stock
   async updateStock(productId: string, quantityChange: number): Promise<void> {
     console.log(`📦 Actualizando stock del producto ${productId}: cambio de ${quantityChange}`);

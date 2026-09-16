@@ -92,6 +92,47 @@ export const subtractDaysBogota = (
 };
 
 /**
+ * Resta N meses calendario al día Colombia y devuelve "YYYY-MM-DD". Si el día
+ * no existe en el mes destino (31 de marzo menos un mes) se usa el último día
+ * de ese mes.
+ */
+export const subtractMonthsBogota = (
+  months: number,
+  reference: Date | string = new Date()
+): string => {
+  const refKey = typeof reference === 'string'
+    ? reference.slice(0, 10)
+    : bogotaDateKey(reference);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(refKey)) return '';
+  const [y, m, d] = refKey.split('-').map(Number);
+  const totalMeses = y * 12 + (m - 1) - months;
+  const anio = Math.floor(totalMeses / 12);
+  const mes = totalMeses - anio * 12 + 1;
+  // Día 0 del mes siguiente = último día del mes destino (aritmética en UTC,
+  // sin depender del huso del navegador).
+  const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  return `${anio}-${pad(mes)}-${pad(Math.min(d, ultimoDia))}`;
+};
+
+/** Primer día del mes calendario Colombia de la fecha dada, "YYYY-MM-01". */
+export const startOfMonthKeyBogota = (input: Date | string = new Date()): string => {
+  const key = typeof input === 'string' ? input.slice(0, 10) : bogotaDateKey(input);
+  return key ? `${key.slice(0, 8)}01` : '';
+};
+
+/** Hora (0-23) en Colombia del instante dado. */
+export const bogotaHour = (input: Date | string): number => {
+  const date = typeof input === 'string' ? new Date(input) : input;
+  if (isNaN(date.getTime())) return NaN;
+  const hora = new Intl.DateTimeFormat('en-US', {
+    timeZone: BOGOTA_TIME_ZONE,
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date).find(p => p.type === 'hour')?.value;
+  return Number(hora);
+};
+
+/**
  * Parsea una fecha desde varios formatos posibles de manera consistente
  */
 export const parseDate = (dateString: string): ParsedDate => {
@@ -164,6 +205,48 @@ export const isUpcomingBirthday = (birthDateString: string, days: number = 7): b
 
   const diffDays = Math.round((targetUtcMs - todayUtcMs) / 86_400_000);
   return diffDays >= 0 && diffDays <= days;
+};
+
+/**
+ * Mes y día de una fecha de nacimiento "YYYY-MM-DD". Se leen del texto y no
+ * con new Date(...): "1990-03-01" se interpreta como medianoche UTC, que en
+ * Colombia todavía es el 28 de febrero.
+ */
+const mesDiaNacimiento = (birthDateString: string): { mes: number; dia: number } | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(birthDateString || '');
+  if (match) return { mes: Number(match[2]), dia: Number(match[3]) };
+  const { date, isValid } = parseDate(birthDateString);
+  if (!isValid) return null;
+  const [, mes, dia] = bogotaDateKey(date).split('-').map(Number);
+  return { mes, dia };
+};
+
+/**
+ * Verifica si el cumpleaños cae en la semana actual (lunes a domingo) según
+ * el calendario Colombia.
+ */
+export const isBirthdayThisWeek = (birthDateString: string): boolean => {
+  const nacimiento = mesDiaNacimiento(birthDateString);
+  if (!nacimiento) return false;
+
+  const todayKey = bogotaDateKey(new Date());
+  // Mediodía Bogotá del día → getUTCDay devuelve el día de la semana Colombia.
+  const diaSemana = new Date(`${todayKey}T12:00:00.000${BOGOTA_OFFSET}`).getUTCDay();
+  const lunes = subtractDaysBogota((diaSemana + 6) % 7, todayKey);
+
+  for (let i = 0; i < 7; i++) {
+    const key = subtractDaysBogota(-i, lunes);
+    const [, m, d] = key.split('-').map(Number);
+    if (m === nacimiento.mes && d === nacimiento.dia) return true;
+  }
+  return false;
+};
+
+/** Verifica si el cumpleaños cae en el mes actual según el calendario Colombia. */
+export const isBirthdayThisMonth = (birthDateString: string): boolean => {
+  const nacimiento = mesDiaNacimiento(birthDateString);
+  if (!nacimiento) return false;
+  return Number(bogotaDateKey(new Date()).slice(5, 7)) === nacimiento.mes;
 };
 
 /**

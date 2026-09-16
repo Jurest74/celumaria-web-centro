@@ -1,3 +1,4 @@
+import { startOfDayBogota, subtractDaysBogota } from '../utils/dateUtils';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, 
@@ -81,8 +82,7 @@ export function Customers() {
 
   // Helper function to calculate sales count for last 30 days per customer
   const getSalesCountForCustomer = useCallback((customerId: string) => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgo = new Date(startOfDayBogota(subtractDaysBogota(30)));
     
     return sales.filter(sale => {
       if (sale.customerId !== customerId) return false;
@@ -1035,9 +1035,20 @@ function CustomerStatsModal({ customer, onClose, onCustomerUpdated }: {
         updatedAt: new Date().toISOString()
       };
 
-      await customersService.update(customer.id, sanitizedCustomer);
+      // Solo los campos que se editan en este formulario. Antes se enviaba el
+      // cliente completo tal como se cargó al abrir la lista, incluido el saldo
+      // a favor: si el cliente había usado o recibido saldo desde entonces, al
+      // guardar el saldo volvía al valor viejo.
+      await customersService.update(customer.id, {
+        name: sanitizedCustomer.name,
+        phone: sanitizedCustomer.phone,
+        email: sanitizedCustomer.email,
+        address: sanitizedCustomer.address,
+        notes: sanitizedCustomer.notes,
+        ...(editingCustomer.birthDate !== undefined && { birthDate: editingCustomer.birthDate })
+      });
       
-      // Actualizar el estado local del cliente
+      // Actualizar el estado local del cliente (conserva el saldo que mostraba)
       setCurrentCustomer(sanitizedCustomer);
       
       showSuccess('Cliente actualizado', 'Los datos del cliente se guardaron correctamente');

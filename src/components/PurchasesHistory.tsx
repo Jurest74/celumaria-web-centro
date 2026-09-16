@@ -162,9 +162,9 @@ export function PurchasesHistory() {
   };
 
   // Corrige fechas tipo 'YYYY-MM-DD' para zona local
+  // Mediodía Colombia del día: el mismo día calendario en cualquier zona.
   function parseLocalDate(dateStr: string): Date {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    return new Date(year, month - 1, day, 0, 0, 0, 0);
+    return new Date(`${dateStr}T12:00:00.000-05:00`);
   }
   
   const getDateRangeText = () => {

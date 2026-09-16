@@ -1,4 +1,5 @@
 
+import { bogotaDateKey, endOfDayBogota, startOfDayBogota, subtractDaysBogota, subtractMonthsBogota } from '../utils/dateUtils';
 import { useState, useMemo } from 'react';
 import { TrendingUp, Package, AlertTriangle, DollarSign, ShoppingCart, Calendar, Target, Warehouse, Users, Tag, PieChart, Activity } from 'lucide-react';
 import { useAppSelector } from '../hooks/useAppSelector';
@@ -23,29 +24,18 @@ export function Dashboard() {
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | '2months'>('month');
   
   // Calcular rango de fechas según período seleccionado
+  // Días calendario Colombia, no los del navegador.
   const { startDate, endDate } = useMemo(() => {
-    const now = new Date();
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    
-    switch (period) {
-      case 'today':
-        break;
-      case 'week':
-        start.setDate(now.getDate() - 7);
-        break;
-      case 'month':
-        start.setMonth(now.getMonth() - 1);
-        break;
-      case '2months':
-        start.setMonth(now.getMonth() - 2);
-        break;
-    }
-    
-    return { startDate: start, endDate: end };
+    const inicioKey =
+      period === 'week' ? subtractDaysBogota(7)
+      : period === 'month' ? subtractMonthsBogota(1)
+      : period === '2months' ? subtractMonthsBogota(2)
+      : bogotaDateKey();
+
+    return {
+      startDate: new Date(startOfDayBogota(inicioKey)),
+      endDate: new Date(endOfDayBogota())
+    };
   }, [period]);
 
   // Filtrar datos por período

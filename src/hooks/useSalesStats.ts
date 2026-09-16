@@ -295,7 +295,7 @@ export function useSalesStats({
           }
 
           if (!isNaN(dateObj.getTime())) {
-            const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = bogotaDateKey(dateObj).slice(0, 7); // "YYYY-MM" Colombia
             const existing = dataByPeriod.get(monthKey) || {
               period: monthKey,
               totalSales: 0,

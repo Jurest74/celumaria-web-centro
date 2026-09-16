@@ -8,7 +8,7 @@ import { customersService } from '../services/firebase/firestore';
 import { TechnicalService as TechnicalServicePlan, TechnicalServiceItem, PaymentMethod, Technician } from '../types';
 import { formatCurrency, formatNumberInput, parseNumberInput } from '../utils/currency';
 import { calculatePaymentCommission } from '../utils/paymentCommission';
-import { getColombiaTimestamp } from '../utils/dateUtils';
+import { getColombiaTimestamp, bogotaDateKey, startOfDayBogota, subtractMonthsBogota } from '../utils/dateUtils';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -551,6 +551,15 @@ export function TechnicalService() {
           totalCost: actual.totalCost - removedAmount,
           remainingBalance: actual.remainingBalance - removedAmount
         };
+        if (actual.serviceCost !== undefined) {
+          // Igual que al agregar un repuesto: con menos repuestos, más mano de
+          // obra. Antes no se recalculaba y el técnico se liquidaba de menos.
+          const partsCost = updatedItems.reduce((sum, item) => sum + (item.totalCost || 0), 0);
+          const laborCost = Math.max(0, actual.serviceCost - partsCost);
+          cambios.laborCost = laborCost;
+          cambios.technicianShare = laborCost * 0.5;
+          cambios.businessShare = laborCost * 0.5;
+        }
         const ventas: Record<string, unknown>[] = [];
         let creditoPorAcreditar = 0;
         let reembolso = 0;
@@ -712,23 +721,60 @@ export function TechnicalService() {
     
     setIsLoading(true);
     try {
-      const updateData = {
-        deviceImei: editingData.deviceImei,
-        deviceBrandModel: editingData.deviceBrandModel,
-        devicePassword: editingData.devicePassword,
-        physicalCondition: editingData.physicalCondition,
-        reportedIssue: editingData.reportedIssue,
-        laborCost: editingData.laborCost,
-        serviceCost: editingData.serviceCost,
-        notes: editingData.notes,
-        technicianId: editingData.technicianId,
-        customerPhone: editableCustomerInfo.phone,
-        customerAddress: editableCustomerInfo.address,
-        updatedAt: getColombiaTimestamp()
-      };
+      const nuevoTecnico = availableTechnicians.find(t => t.id === editingData.technicianId);
 
-      await technicalServicesService.update(selectedTechnicalService.id, updateData);
-      
+      // Se guarda sobre el servicio guardado para recalcular la mano de obra con
+      // sus repuestos reales. Antes al cambiar el precio no se recalculaban
+      // laborCost ni technicianShare, y al tecnico se le liquidaba sobre el
+      // valor viejo. Tampoco se actualizaba technicianName al reasignar el
+      // servicio, y la liquidacion salia con el nombre del tecnico anterior.
+      const { updatedService, yaLiquidado, participacionCambio } = await actualizarEnTransaccion<TechnicalServicePlan, {
+        updatedService: TechnicalServicePlan;
+        yaLiquidado: boolean;
+        participacionCambio: boolean;
+      }>(COLLECTIONS.TECHNICAL_SERVICES, selectedTechnicalService.id, (actual) => {
+        const cambios: Record<string, unknown> = {
+          deviceImei: editingData.deviceImei,
+          deviceBrandModel: editingData.deviceBrandModel,
+          devicePassword: editingData.devicePassword,
+          physicalCondition: editingData.physicalCondition,
+          reportedIssue: editingData.reportedIssue,
+          notes: editingData.notes,
+          technicianId: editingData.technicianId,
+          customerPhone: editableCustomerInfo.phone,
+          customerAddress: editableCustomerInfo.address
+        };
+        if (nuevoTecnico?.name) {
+          cambios.technicianName = nuevoTecnico.name;
+        }
+
+        // Un servicio anterior al costo total pasa a ese sistema solo si se le
+        // pone un precio. Antes cualquier edicion le escribia serviceCost: 0 (el
+        // valor por defecto del formulario) y el servicio quedaba sobrepagado.
+        if (actual.serviceCost !== undefined || (editingData.serviceCost || 0) > 0) {
+          // Sistema de costo total: la mano de obra es lo que queda del precio
+          // despues de los repuestos, repartida 50/50, igual que al crear.
+          const partsCost = (actual.items || []).reduce((sum, item) => sum + (item.totalCost || 0), 0);
+          const laborCost = Math.max(0, (editingData.serviceCost || 0) - partsCost);
+          cambios.serviceCost = editingData.serviceCost;
+          cambios.laborCost = laborCost;
+          cambios.technicianShare = laborCost * 0.5;
+          cambios.businessShare = laborCost * 0.5;
+        } else {
+          // Servicios anteriores al costo total: la mano de obra se edita directo.
+          cambios.laborCost = editingData.laborCost;
+        }
+
+        return {
+          cambios,
+          resultado: {
+            updatedService: { ...actual, ...cambios, updatedAt: getColombiaTimestamp() } as TechnicalServicePlan,
+            yaLiquidado: !!actual.liquidationId,
+            participacionCambio: cambios.technicianShare !== undefined && cambios.technicianShare !== actual.technicianShare
+          }
+        };
+      });
+
       // Also update customer info if it has changed
       const currentCustomer = customers.find(c => c.id === selectedTechnicalService.customerId);
       if (currentCustomer && 
@@ -738,10 +784,6 @@ export function TechnicalService() {
       }
 
       // Update local state
-      const updatedService = {
-        ...selectedTechnicalService,
-        ...updateData
-      };
       updateTechnicalServiceInState(updatedService);
       
       // Force refresh
@@ -749,9 +791,15 @@ export function TechnicalService() {
       
       setIsEditingDetails(false);
       showSuccess('Información actualizada', 'Los datos del servicio técnico han sido actualizados correctamente.');
+      if (yaLiquidado && participacionCambio) {
+        showWarning(
+          'Servicio ya liquidado',
+          'Este servicio ya se le liquidó al técnico con el valor anterior. La liquidación no cambia: si hay diferencia, ajústala por fuera.'
+        );
+      }
     } catch (error) {
       console.error('Error updating technical service details:', error);
-      showError('Error al actualizar', 'No se pudieron actualizar los datos. Inténtalo de nuevo.');
+      showError('Error al actualizar', error instanceof Error && error.message ? error.message : 'No se pudieron actualizar los datos. Inténtalo de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -766,10 +814,9 @@ export function TechnicalService() {
       // Filtro por vendedor
       if (salesPersonFilter !== 'all' && layaway.salesPersonId !== salesPersonFilter) return false;
 
-      // Filtro por rango de fechas (usando fecha local para evitar desfase UTC)
+      // Filtro por rango de fechas (día calendario Colombia)
       if (dateFrom || dateTo) {
-        const d = new Date(layaway.createdAt);
-        const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const localDate = bogotaDateKey(new Date(layaway.createdAt));
         if (dateFrom && localDate < dateFrom) return false;
         if (dateTo && localDate > dateTo) return false;
       }
@@ -1984,8 +2031,7 @@ export function TechnicalService() {
     const cancelledLayaways = allTechnicalServices.filter(l => l.status === 'cancelled');
     
     // Calcular ingresos de servicios completados en los últimos 2 meses
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const twoMonthsAgo = new Date(startOfDayBogota(subtractMonthsBogota(2)));
     
     const totalCompletedRevenue = completedLayaways.reduce((sum, service) => {
       // Verificar si el servicio fue completado en los últimos 2 meses

@@ -1,3 +1,4 @@
+import { isBirthdayToday as esCumpleHoy, isBirthdayThisWeek as esCumpleEstaSemana, isBirthdayThisMonth as esCumpleEsteMes } from '../utils/dateUtils';
 import { useEffect, useState, useCallback } from 'react';
 import { collection, query, orderBy, limit, startAfter, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -27,29 +28,12 @@ export function usePaginatedCustomers({
   const [hasPrevPage, setHasPrevPage] = useState(false);
 
   // Helper functions for birthday filtering
-  const isBirthdayToday = useCallback((birthDate: string) => {
-    const today = new Date();
-    const [, month, day] = birthDate.split('-').map(Number);
-    return today.getDate() === day && (today.getMonth() + 1) === month;
-  }, []);
-
-  const isBirthdayThisWeek = useCallback((birthDate: string) => {
-    const today = new Date();
-    const birth = new Date(birthDate);
-    const thisYear = today.getFullYear();
-    const birthdayThisYear = new Date(thisYear, birth.getMonth(), birth.getDate());
-    const firstDayOfWeek = new Date(today);
-    firstDayOfWeek.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    const lastDayOfWeek = new Date(firstDayOfWeek);
-    lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 6);
-    return birthdayThisYear >= firstDayOfWeek && birthdayThisYear <= lastDayOfWeek;
-  }, []);
-
-  const isBirthdayThisMonth = useCallback((birthDate: string) => {
-    const today = new Date();
-    const birth = new Date(birthDate);
-    return today.getMonth() === birth.getMonth();
-  }, []);
+  // Calendario Colombia. Antes "semana" y "mes" leían la fecha de nacimiento
+  // con new Date("YYYY-MM-DD"), que es medianoche UTC y en Colombia todavía es
+  // el día anterior: un cumpleaños el día 1 salía en el mes anterior.
+  const isBirthdayToday = useCallback((birthDate: string) => esCumpleHoy(birthDate), []);
+  const isBirthdayThisWeek = useCallback((birthDate: string) => esCumpleEstaSemana(birthDate), []);
+  const isBirthdayThisMonth = useCallback((birthDate: string) => esCumpleEsteMes(birthDate), []);
 
   // Helper to build Firestore query
   const buildQuery = useCallback(async (_page: number, prevLastDoc: any = null) => {

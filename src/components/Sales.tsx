@@ -15,6 +15,8 @@ import { useFirebase } from '../contexts/FirebaseContext';
 import {
   calculateSaleTotal as calcSaleTotal,
   getTotalPaidAmount,
+  montoMaximoPago,
+  restantePorPagar,
   type ExtendedPaymentMethod
 } from '../utils/salesCalculations';
 import { CourtesyModal } from './CourtesyModal';
@@ -543,9 +545,18 @@ export function Sales() {
     [saleForm.paymentMethods, customerState.selectedCustomer?.credit, customerState.applyCredit, saleTotal.total]
   );
 
+  // Lo que falta del precio. Un pago con tarjeta trae el recargo sumado, así
+  // que solo su parte sin recargo descuenta del restante.
   const remainingAmount = useMemo(() => 
-    Math.max(0, saleTotal.total - totalPaidAmount),
-    [saleTotal.total, totalPaidAmount]
+    restantePorPagar(saleTotal.total, saleForm.paymentMethods),
+    [saleTotal.total, saleForm.paymentMethods]
+  );
+
+  // Lo máximo que se puede teclear con el método elegido (con tarjeta, el
+  // restante más el recargo).
+  const maxPaymentAmount = useMemo(() =>
+    montoMaximoPago(saleForm.paymentMethod, remainingAmount),
+    [saleForm.paymentMethod, remainingAmount]
   );
 
   const addPaymentMethod = useCallback((method: 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito', amount: number) => {
@@ -1370,7 +1381,7 @@ export function Sales() {
                             <button
                               onClick={() => {
                                 if (remainingAmount > 0) {
-                                  addPaymentMethod(saleForm.paymentMethod, remainingAmount);
+                                  addPaymentMethod(saleForm.paymentMethod, maxPaymentAmount);
                                 }
                               }}
                               disabled={uiState.isProcessing || remainingAmount <= 0}
@@ -1379,6 +1390,11 @@ export function Sales() {
                               Todo
                             </button>
                           </div>
+                          {maxPaymentAmount !== remainingAmount && (
+                            <p className="text-xs text-orange-600">
+                              Con tarjeta se cobra 3% de recargo: teclea hasta {formatCurrency(maxPaymentAmount)} para cubrir {formatCurrency(remainingAmount)}.
+                            </p>
+                          )}
                           <div className="flex gap-3">
                             <input
                               type="text"
@@ -1387,13 +1403,13 @@ export function Sales() {
                               className="flex-1 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
                               onChange={(e) => {
                                 const numeric = parseNumberInput(e.target.value);
-                                const limitedValue = Math.min(numeric, remainingAmount);
+                                const limitedValue = Math.min(numeric, maxPaymentAmount);
                                 e.target.value = formatNumberInput(limitedValue.toString());
                               }}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   const amount = parseNumberInput(e.currentTarget.value);
-                                  if (amount > 0 && amount <= remainingAmount) {
+                                  if (amount > 0 && amount <= maxPaymentAmount) {
                                     addPaymentMethod(saleForm.paymentMethod, amount);
                                     e.currentTarget.value = '';
                                   }
@@ -1404,7 +1420,7 @@ export function Sales() {
                               onClick={(e) => {
                                 const input = e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement;
                                 const amount = parseNumberInput(input?.value || '0');
-                                if (amount > 0 && amount <= remainingAmount) {
+                                if (amount > 0 && amount <= maxPaymentAmount) {
                                   addPaymentMethod(saleForm.paymentMethod, amount);
                                   if (input) input.value = '';
                                 }

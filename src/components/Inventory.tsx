@@ -203,7 +203,16 @@ export function Inventory() {
       if (editingProduct) {
         console.log('Actualizando producto:', editingProduct.id);
         const previousStock = Number(editingProduct.stock || 0);
-        await productsService.update(editingProduct.id, productData);
+        // El stock solo se escribe si se cambió en el formulario, y verificando
+        // que no se haya movido desde que se abrió (ver productsService.ajustarStock).
+        // Se ajusta antes que el resto: si el stock cambió, no se guarda nada.
+        const datosSinStock: Partial<typeof productData> = { ...productData };
+        delete datosSinStock.stock;
+        let stockAnterior = previousStock;
+        if (previousStock !== stock) {
+          stockAnterior = await productsService.ajustarStock(editingProduct.id, previousStock, stock);
+        }
+        await productsService.update(editingProduct.id, datosSinStock);
 
         // Auditoría: si el stock cambió manualmente, dejar registro
         // en /stockAdjustments con quién, cuándo, y los valores antes/después.
@@ -213,9 +222,9 @@ export function Inventory() {
             await addDoc(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), {
               productId: editingProduct.id,
               productName: productData.name,
-              previousStock,
+              previousStock: stockAnterior,
               newStock: stock,
-              delta: stock - previousStock,
+              delta: stock - stockAnterior,
               reason: 'manual_inventory_edit',
               userId: appUser?.uid || null,
               userEmail: appUser?.email || null,

@@ -66,6 +66,40 @@ export const calculateSaleTotal = (
   };
 };
 
+/**
+ * Parte de un pago que cubre el precio, sin el recargo que paga el cliente.
+ *
+ * Con tarjeta el cajero teclea el monto con el recargo ya sumado (103.000 por
+ * un precio de 100.000), así que lo que abona al precio es el monto dividido
+ * por 1 + recargo.
+ */
+export const principalDePago = (method: string, amount: number): number => {
+  const tasaRecargo = calculateCustomerSurcharge(method, 1);
+  return tasaRecargo > 0 ? amount / (1 + tasaRecargo) : amount;
+};
+
+/**
+ * Monto máximo que se puede teclear con un método para cubrir lo que falta
+ * del precio: con tarjeta incluye el recargo. Se redondea hacia arriba al peso
+ * para que el pago alcance a cubrir el restante.
+ *
+ * Antes el campo no dejaba pasar del restante sin recargo: en pagos múltiples
+ * era imposible teclear el recargo de tarjeta y nunca quedaba registrado.
+ */
+export const montoMaximoPago = (method: string, restante: number): number => {
+  if (restante <= 0) return 0;
+  const tasaRecargo = calculateCustomerSurcharge(method, 1);
+  return tasaRecargo > 0 ? Math.ceil(restante * (1 + tasaRecargo)) : restante;
+};
+
+/** Lo que falta cubrir del precio, contando solo la parte de cada pago que abona al precio. */
+export const restantePorPagar = (total: number, paymentMethods: ExtendedPaymentMethod[]): number => {
+  const cubierto = paymentMethods.reduce((sum, p) => sum + principalDePago(p.method, p.amount), 0);
+  const restante = total - cubierto;
+  // Menos de un peso es redondeo del recargo, no saldo pendiente.
+  return restante < 1 ? 0 : restante;
+};
+
 export const calculateCreditUsed = (
   customerCredit: number,
   total: number,

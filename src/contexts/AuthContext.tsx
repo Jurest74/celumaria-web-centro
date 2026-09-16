@@ -4,7 +4,7 @@ import { AppUser, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS, createPermissionHelpers } from '../utils/permissions';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
-import { bogotaDateKey } from '../utils/dateUtils';
+import { bogotaDateKey, isUpcomingBirthday } from '../utils/dateUtils';
 
 interface AuthContextType {
   user: User | null;
@@ -43,31 +43,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const customers = await customersService.getAll();
         
         // Usar la misma lógica que useBirthdayNotifications
-        const hasUpcomingBirthdays = customers.some(customer => {
-          if (!customer.birthDate) return false;
-          
-          try {
-            const birthDateParts = customer.birthDate.split('-');
-            if (birthDateParts.length !== 3) return false;
-            
-            const currentYear = new Date().getFullYear();
-            const birthMonth = parseInt(birthDateParts[1], 10) - 1;
-            const birthDay = parseInt(birthDateParts[2], 10);
-            
-            let birthdayThisYear = new Date(currentYear, birthMonth, birthDay);
-            
-            if (birthdayThisYear < new Date()) {
-              birthdayThisYear = new Date(currentYear + 1, birthMonth, birthDay);
-            }
-            
-            const timeDifference = birthdayThisYear.getTime() - new Date().getTime();
-            const daysUntilBirthday = Math.ceil(timeDifference / (1000 * 60 * 60 * 24));
-            
-            return daysUntilBirthday >= 0 && daysUntilBirthday <= 5;
-          } catch (error) {
-            return false;
-          }
-        });
+        // Misma regla que useBirthdayNotifications: próximos 5 días en el
+        // calendario Colombia, no en el del navegador.
+        const hasUpcomingBirthdays = customers.some(customer =>
+          !!customer.birthDate && isUpcomingBirthday(customer.birthDate, 5)
+        );
         
         if (hasUpcomingBirthdays) {
           setShowBirthdayNotification(true);
@@ -249,36 +229,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('🎂 Verificando cumpleaños próximos...');
         console.log(`📅 Fecha actual: ${today.toLocaleDateString()}`);
         
-        const upcomingBirthdays = customers.filter(customer => {
-          if (!customer.birthDate) return false;
-          
-          try {
-            const birthDateParts = customer.birthDate.split('-');
-            if (birthDateParts.length !== 3) return false;
-            
-            const currentYear = today.getFullYear();
-            const birthMonth = parseInt(birthDateParts[1], 10) - 1;
-            const birthDay = parseInt(birthDateParts[2], 10);
-            
-            let birthdayThisYear = new Date(currentYear, birthMonth, birthDay);
-            
-            if (birthdayThisYear < today) {
-              birthdayThisYear = new Date(currentYear + 1, birthMonth, birthDay);
-            }
-            
-            const timeDifference = birthdayThisYear.getTime() - today.getTime();
-            const daysUntilBirthday = Math.ceil(timeDifference / (1000 * 60 * 60 * 24));
-            
-            if (daysUntilBirthday >= 0 && daysUntilBirthday <= 5) {
-              console.log(`🎈 ${customer.name} cumple en ${daysUntilBirthday} días (${customer.birthDate})`);
-              return true;
-            }
-            return false;
-          } catch (error) {
-            console.warn(`❌ Error procesando fecha de ${customer.name}:`, error);
-            return false;
-          }
-        });
+        const upcomingBirthdays = customers.filter(customer =>
+          !!customer.birthDate && isUpcomingBirthday(customer.birthDate, 5)
+        );
         
         console.log(`🎯 Total cumpleaños próximos: ${upcomingBirthdays.length}`);
         return upcomingBirthdays;

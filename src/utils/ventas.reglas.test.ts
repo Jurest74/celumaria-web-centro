@@ -6,7 +6,7 @@
 //  - Devolver un producto recalcula todo en proporcion.
 
 import { describe, it, expect } from 'vitest';
-import { calculateSaleTotal, getTotalPaidAmount, recalcularTrasDevolucion } from './salesCalculations';
+import { calculateSaleTotal, getTotalPaidAmount, recalcularTrasDevolucion, montoMaximoPago, restantePorPagar } from './salesCalculations';
 import { parseNumberInput } from './currency';
 
 const item = (salePrice: number, purchasePrice: number, quantity: number) => ({
@@ -121,5 +121,48 @@ describe('montos tecleados: solo pesos enteros', () => {
 
   it('texto sin digitos sigue siendo cero', () => {
     expect(parseNumberInput('abc')).toBe(0);
+  });
+});
+
+describe('pagos multiples: limites del campo de monto con recargo', () => {
+  const items = [item(100000, 60000, 1)];
+  it('con tarjeta se puede teclear el precio restante mas el 3%', () => {
+    expect(montoMaximoPago('tarjeta', 100000)).toBe(103000);
+    expect(montoMaximoPago('efectivo', 100000)).toBe(100000);
+  });
+
+  it('una tarjeta con recargo cubre el precio y el recargo queda registrado', () => {
+    const pagos = [{ method: 'tarjeta', amount: 103000, commission: 4120 }];
+    expect(restantePorPagar(100000, pagos)).toBe(0);
+    const r = calculateSaleTotal(items, 0, 'efectivo', pagos, true);
+    expect(r.customerSurcharge).toBe(3000);
+    expect(r.finalTotal).toBe(103000);
+  });
+
+  it('efectivo y tarjeta: el recargo aplica solo a la parte con tarjeta', () => {
+    const pagos = [{ method: 'efectivo', amount: 50000 }];
+    const restante = restantePorPagar(100000, pagos);
+    expect(restante).toBe(50000);
+    const tarjeta = montoMaximoPago('tarjeta', restante);
+    expect(tarjeta).toBe(51500);
+    const todos = [...pagos, { method: 'tarjeta', amount: tarjeta, commission: tarjeta * 0.04 }];
+    expect(restantePorPagar(100000, todos)).toBe(0);
+    expect(calculateSaleTotal(items, 0, 'efectivo', todos, true).customerSurcharge).toBe(1500);
+  });
+
+  it('tarjeta primero y efectivo despues: el efectivo cubre solo el precio restante', () => {
+    const pagos = [{ method: 'tarjeta', amount: 51500 }];
+    expect(restantePorPagar(100000, pagos)).toBe(50000);
+    expect(montoMaximoPago('efectivo', 50000)).toBe(50000);
+  });
+
+  it('una tarjeta sin recargo deja saldo pendiente', () => {
+    expect(restantePorPagar(100000, [{ method: 'tarjeta', amount: 100000 }])).toBeGreaterThan(2900);
+  });
+
+  it('montos que no dan exacto redondean hacia arriba y no dejan centavos pendientes', () => {
+    const restante = 33333;
+    const tarjeta = montoMaximoPago('tarjeta', restante);
+    expect(restantePorPagar(restante, [{ method: 'tarjeta', amount: tarjeta }])).toBe(0);
   });
 });
