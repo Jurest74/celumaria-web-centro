@@ -429,6 +429,26 @@ export function TechnicalService() {
     setShowDeleteConfirm(true);
   };
 
+  /**
+   * Sobrepago que deja eliminar un repuesto.
+   *
+   * Regla del negocio: en un servicio con precio total (serviceCost) el cliente
+   * paga el precio acordado; quitar un repuesto no cambia ese precio, solo pasa
+   * su valor a mano de obra. No hay sobrepago. Antes se calculaba con la fórmula
+   * de los servicios antiguos (repuestos + mano de obra), como si el precio
+   * bajara: al cliente se le acreditaba el repuesto y a la vez quedaba debiendo
+   * esa misma plata.
+   *
+   * Los servicios anteriores al precio total sí cobran repuestos + mano de obra,
+   * así que para ellos quitar un repuesto baja lo que se cobra.
+   */
+  const sobrepagoAlEliminarRepuesto = (servicio: TechnicalServicePlan, montoRepuesto: number): number => {
+    if (servicio.serviceCost !== undefined) return 0;
+    const totalActual = servicio.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (servicio.laborCost || 0);
+    const totalPagado = (servicio.payments || []).reduce((sum: number, payment: any) => sum + payment.amount, 0);
+    return totalPagado - (totalActual - montoRepuesto);
+  };
+
   // Handle confirming the delete
   const handleConfirmDelete = async () => {
     if (!selectedTechnicalService || !partToDelete) return;
@@ -539,12 +559,8 @@ export function TechnicalService() {
           throw new Error('Ese repuesto ya no está en el servicio (puede que lo hayan eliminado desde otro equipo). Recarga el servicio.');
         }
 
-        // Calculate if there will be overpayment
-        const currentTotal = actual.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (actual.laborCost || 0);
-        const totalPaid = (actual.payments || []).reduce((sum: number, payment: any) => sum + payment.amount, 0);
         const removedAmount = part.totalCost;
-        const newTotal = currentTotal - removedAmount;
-        const overpayment = totalPaid - newTotal;
+        const overpayment = sobrepagoAlEliminarRepuesto(actual, removedAmount);
 
         // Remove the item from the array
         const updatedItems = actual.items.filter(item => item.id !== partId);
@@ -4706,11 +4722,7 @@ export function TechnicalService() {
                   }
                   
                   // For regular deletion, check if it creates overpayment
-                  const currentTotal = selectedTechnicalService.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (selectedTechnicalService.laborCost || 0);
-                  const totalPaid = selectedTechnicalService.payments.reduce((sum: number, payment: any) => sum + payment.amount, 0);
-                  const removedAmount = partToDelete.item.totalCost;
-                  const newTotal = currentTotal - removedAmount;
-                  const overpayment = totalPaid - newTotal;
+                  const overpayment = sobrepagoAlEliminarRepuesto(selectedTechnicalService, partToDelete.item.totalCost);
                   
                   if (overpayment > 0.01) {
                     return (
@@ -4800,11 +4812,7 @@ export function TechnicalService() {
                   }
                   
                   // For regular deletion
-                  const currentTotal = selectedTechnicalService.items.reduce((sum: number, item: any) => sum + item.totalCost, 0) + (selectedTechnicalService.laborCost || 0);
-                  const totalPaid = selectedTechnicalService.payments.reduce((sum: number, payment: any) => sum + payment.amount, 0);
-                  const removedAmount = partToDelete.item.totalCost;
-                  const newTotal = currentTotal - removedAmount;
-                  const overpayment = totalPaid - newTotal;
+                  const overpayment = sobrepagoAlEliminarRepuesto(selectedTechnicalService, partToDelete.item.totalCost);
                   const hasOverpayment = overpayment > 0.01;
                   const canDelete = !hasOverpayment || overpaymentAction !== null;
                   

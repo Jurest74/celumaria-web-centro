@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Sale } from '../types';
+import { gananciaReal } from '../utils/salesCalculations';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
 
 const BOGOTA_OFFSET = '-05:00';
@@ -355,7 +356,7 @@ export function useSalesStats({
         allSales.forEach(sale => {
           const saleAmount = sale.finalTotal ?? sale.total ?? 0;
           totalAllTime += saleAmount;
-          totalProfitAllTime += sale.totalProfit ?? 0;
+          totalProfitAllTime += gananciaReal(sale);
 
           let dateObj;
           if (typeof sale.createdAt === 'object' && sale.createdAt !== null && 'seconds' in sale.createdAt) {

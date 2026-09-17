@@ -3,6 +3,7 @@
 
 import type { Product, Sale, LayawayPlan, DashboardStats } from '../types';
 import { bogotaDateKey } from './dateUtils';
+import { costoReal, gananciaReal } from './salesCalculations';
 
 // ✅ Cálculos de productos (instantáneos)
 export const productCalculations = {
@@ -61,8 +62,9 @@ export const salesCalculations = {
     });
 
     const totalSales = filteredSales.reduce((sum, sale) => sum + (sale.finalTotal || sale.total), 0);
-    const totalCost = filteredSales.reduce((sum, sale) => sum + (sale.totalCost || 0), 0);
-    const totalProfit = filteredSales.reduce((sum, sale) => sum + (sale.totalProfit || 0), 0);
+    // Con cortesías descontadas, igual que Gestión de Ventas.
+    const totalCost = filteredSales.reduce((sum, sale) => sum + costoReal(sale), 0);
+    const totalProfit = filteredSales.reduce((sum, sale) => sum + gananciaReal(sale), 0);
     const averageTransaction = filteredSales.length > 0 ? totalSales / filteredSales.length : 0;
     
     // Para el margen, solo considerar ventas que generan revenue (excluir entregas con total=0)

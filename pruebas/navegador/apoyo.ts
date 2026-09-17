@@ -77,3 +77,27 @@ export async function irA(page: Page, seccion: string): Promise<void> {
   }
   await page.mouse.move(900, 450);
 }
+
+export async function confirmar(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Confirmar' }).click();
+}
+
+/** Abre el detalle de un plan separe desde su pantalla. */
+export async function abrirDetallePlan(page: Page, cliente: string): Promise<void> {
+  const detalle = page.getByRole('heading', { name: `Plan Separe - ${cliente}` });
+  if (!(await detalle.isVisible())) {
+    await page.getByRole('combobox').first().selectOption({ label: 'Todos los estados' });
+    await page.getByRole('heading', { name: cliente, level: 3 }).locator('xpath=ancestor::div[.//button[@title="Ver detalles" or @aria-label="Ver detalles" or normalize-space()="Ver detalles"]][1]')
+      .getByRole('button', { name: 'Ver detalles' }).first().click();
+  }
+  await expect(detalle).toBeVisible();
+}
+
+/** Registra un pago desde el diálogo "Registrar Pago" (plan separe o servicio técnico). */
+export async function registrarPagoEnDialogo(page: Page, monto: string, antes?: (page: Page) => Promise<void>): Promise<void> {
+  await page.getByRole('button', { name: 'Registrar Pago' }).first().click();
+  if (antes) await antes(page);
+  const dialogo = page.getByRole('heading', { name: 'Registrar Pago' }).locator('xpath=ancestor::div[.//textarea or .//input][1]');
+  await dialogo.getByRole('textbox', { name: '0' }).fill(monto);
+  await page.getByRole('button', { name: 'Registrar Pago' }).last().click();
+}

@@ -1,3 +1,4 @@
+import { costoReal, gananciaReal } from '../utils/salesCalculations';
 import { bogotaDateKey, bogotaHour, startOfMonthKeyBogota } from '../utils/dateUtils';
 import React, { useEffect } from 'react';
 import { BarChart3, TrendingUp, PieChart, LineChart, DollarSign, Target } from 'lucide-react';
@@ -239,7 +240,7 @@ export function Reports() {
           paymentMethods[method].count += 1;
           // Distribuir ganancia proporcionalmente
           const ingresoVenta = sale.finalTotal ?? sale.total ?? 0;
-          const saleProfitPerPayment = (sale.totalProfit || 0) * ((payment.amount || 0) / (ingresoVenta || 1));
+          const saleProfitPerPayment = gananciaReal(sale) * ((payment.amount || 0) / (ingresoVenta || 1));
           paymentMethods[method].profit += saleProfitPerPayment;
         });
       } else {
@@ -250,7 +251,7 @@ export function Reports() {
         }
         paymentMethods[method].value += sale.finalTotal ?? sale.total ?? 0;
         paymentMethods[method].count += 1;
-        paymentMethods[method].profit += sale.totalProfit || 0;
+        paymentMethods[method].profit += gananciaReal(sale);
       }
     });
     
@@ -290,7 +291,7 @@ export function Reports() {
         }
         
         clientSales[clientKey].totalPurchases += sale.finalTotal ?? sale.total ?? 0;
-        clientSales[clientKey].totalProfit += sale.totalProfit || 0;
+        clientSales[clientKey].totalProfit += gananciaReal(sale);
         clientSales[clientKey].transactionCount += 1;
       }
     });
@@ -327,8 +328,8 @@ export function Reports() {
           }
           
           salesByDate[dateKey].revenue += sale.finalTotal ?? sale.total ?? 0;
-          salesByDate[dateKey].cost += sale.totalCost || 0;
-          salesByDate[dateKey].profit += sale.totalProfit || 0;
+          salesByDate[dateKey].cost += costoReal(sale);
+          salesByDate[dateKey].profit += gananciaReal(sale);
           salesByDate[dateKey].transactions += 1;
         }
       }
@@ -367,8 +368,8 @@ export function Reports() {
           }
           
           salesByDate[dateKey].revenue += sale.finalTotal ?? sale.total ?? 0;
-          salesByDate[dateKey].cost += sale.totalCost || 0;
-          salesByDate[dateKey].profit += sale.totalProfit || 0;
+          salesByDate[dateKey].cost += costoReal(sale);
+          salesByDate[dateKey].profit += gananciaReal(sale);
           salesByDate[dateKey].transactions += 1;
         }
       }
@@ -1050,7 +1051,7 @@ export function Reports() {
             <p className="text-xs text-gray-500 mb-2">Ventas reales agrupadas por día (máximo últimos 8 días con ventas).</p>
             <div className="space-y-3">
               {Object.entries(salesByDay)
-                .sort(([a], [b]) => new Date(b).getTime() - new Date(a).getTime())
+                .sort(([a], [b]) => b.localeCompare(a))
                 .slice(0, 8)
                 .map(([date, data]) => {
                   const margin = data.revenue > 0 ? (data.profit / data.revenue) * 100 : 0;
@@ -1058,7 +1059,10 @@ export function Reports() {
                     <div key={date} className="flex justify-between items-center p-4 bg-blue-50 rounded-lg">
                       <div>
                         <div className="font-medium text-gray-900">
-                          {new Date(date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', 
+                          {/* La clave es "YYYY-MM-DD" en Colombia. new Date("YYYY-MM-DD")
+                              la toma como medianoche UTC, que en Colombia es el día
+                              anterior: cada día salía rotulado con la fecha previa. */}
+                          {new Date(`${date}T12:00:00.000-05:00`).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', 
                             weekday: 'long', 
                             year: 'numeric', 
                             month: 'short', 

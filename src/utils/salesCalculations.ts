@@ -164,3 +164,18 @@ export const recalcularTrasDevolucion = (
     profitMargin: recalculado.total > 0 ? (totalProfit / recalculado.total) * 100 : 0,
   };
 };
+/**
+ * Ganancia y costo reales de una venta: si lleva cortesías, su costo se
+ * descuenta (realProfit / realTotalCost). Antes Gestión de Ventas lo hacía
+ * pero el Panel de Control y Reportes usaban totalProfit / totalCost, así que
+ * la misma venta mostraba ganancias distintas según la pantalla.
+ */
+export const gananciaReal = (venta: { courtesyItems?: unknown[]; realProfit?: number; totalProfit?: number }): number =>
+  venta.courtesyItems && venta.courtesyItems.length > 0
+    ? (venta.realProfit ?? venta.totalProfit ?? 0)
+    : (venta.totalProfit ?? 0);
+
+export const costoReal = (venta: { courtesyItems?: unknown[]; realTotalCost?: number; totalCost?: number }): number =>
+  venta.courtesyItems && venta.courtesyItems.length > 0
+    ? (venta.realTotalCost ?? venta.totalCost ?? 0)
+    : (venta.totalCost ?? 0);

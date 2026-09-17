@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Sale } from '../types';
+import { gananciaReal } from '../utils/salesCalculations';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
 
 interface CustomerSalesOptions {
@@ -141,7 +142,7 @@ export function useCustomerSalesStats({
 
       // Calcular estadísticas básicas del cliente
       const totalSales = customerSales.reduce((sum, sale) => sum + (sale.total ?? 0), 0);
-      const totalProfit = customerSales.reduce((sum, sale) => sum + (sale.totalProfit ?? 0), 0);
+      const totalProfit = customerSales.reduce((sum, sale) => sum + gananciaReal(sale), 0);
       const transactionCount = customerSales.length;
       const averageTransaction = transactionCount > 0 ? totalSales / transactionCount : 0;
 
@@ -206,7 +207,7 @@ export function useCustomerSalesStats({
             return monthKey === period;
           });
           
-          const monthProfit = monthSales.reduce((sum, sale) => sum + (sale.totalProfit ?? 0), 0);
+          const monthProfit = monthSales.reduce((sum, sale) => sum + gananciaReal(sale), 0);
           const monthCount = monthSales.length;
           
           return {
@@ -241,7 +242,7 @@ export function useCustomerSalesStats({
             const yearKey = year.toString();
             const existing = salesByYear.get(yearKey) || { total: 0, profit: 0, count: 0 };
             existing.total += sale.total ?? 0;
-            existing.profit += sale.totalProfit ?? 0;
+            existing.profit += gananciaReal(sale);
             existing.count += 1;
             salesByYear.set(yearKey, existing);
           }

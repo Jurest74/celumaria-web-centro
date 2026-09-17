@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Purchase, PurchaseReturn, PurchaseReturnItem } from '../types';
-import { doc, arrayUnion, increment, writeBatch } from 'firebase/firestore';
+import { doc, arrayUnion, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 export function usePurchaseReturns() {
@@ -21,8 +21,6 @@ export function usePurchaseReturns() {
     setError(null);
 
     try {
-      const batch = writeBatch(db);
-      
       // Crear el objeto de devolución
       const returnId = `return_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const totalRefund = returnItems.reduce((sum, item) => sum + item.totalRefund, 0);
@@ -39,35 +37,66 @@ export function usePurchaseReturns() {
         notes
       };
 
-      // Actualizar la compra con la devolución
-      const purchaseRef = doc(db, 'purchases', purchase.id);
-      const currentTotalReturned = purchase.totalReturned || 0;
-      const newTotalReturned = currentTotalReturned + totalRefund;
-      const newNetCost = (purchase.totalCost || 0) - newTotalReturned;
+      // Compra, stock y validaciones en una sola transacción, sobre el dato
+      // guardado. Antes se escribía desde la compra que tenía la pantalla y sin
+      // mirar el stock: se podían devolver al proveedor unidades que ya se
+      // habían vendido y el inventario quedaba en negativo.
+      await runTransaction(db, async (tx) => {
+        const purchaseRef = doc(db, 'purchases', purchase.id);
+        const compraSnap = await tx.get(purchaseRef);
+        if (!compraSnap.exists()) {
+          throw new Error('La compra ya no existe.');
+        }
+        const compra = { id: compraSnap.id, ...compraSnap.data() } as Purchase;
 
-      batch.update(purchaseRef, {
-        returns: arrayUnion(purchaseReturn),
-        totalReturned: newTotalReturned,
-        netCost: newNetCost,
-        updatedAt: new Date().toISOString()
-      });
+        // Todas las lecturas antes de escribir.
+        const stockPorProducto = new Map<string, number>();
+        for (const returnItem of returnItems) {
+          const productoSnap = await tx.get(doc(db, 'products', returnItem.productId));
+          if (!productoSnap.exists()) {
+            throw new Error(`El producto ${returnItem.productName} ya no existe en el inventario.`);
+          }
+          stockPorProducto.set(returnItem.productId, Number(productoSnap.data().stock || 0));
+        }
 
-      // Actualizar el stock de cada producto devuelto
-      for (const returnItem of returnItems) {
-        // Reducir el stock (porque se devuelve mercancía)
-        const productRef = doc(db, 'products', returnItem.productId);
-        batch.update(productRef, {
-          stock: increment(-returnItem.returnedQuantity),
+        for (const returnItem of returnItems) {
+          // Lo que queda por devolver según la compra guardada (otra devolución
+          // pudo registrarse desde otro equipo).
+          const original = compra.items.find(item => item.productId === returnItem.productId);
+          const yaDevuelto = (compra.returns || []).reduce((sum, ret) =>
+            sum + (ret.items.find(item => item.productId === returnItem.productId)?.returnedQuantity || 0), 0);
+          const devolvible = (original?.quantity || 0) - yaDevuelto;
+          if (returnItem.returnedQuantity > devolvible) {
+            throw new Error(
+              `De ${returnItem.productName} solo quedan ${devolvible} unidad(es) por devolver de esta compra.`
+            );
+          }
+
+          // Regla del negocio: no se devuelve al proveedor lo que ya no está en la tienda.
+          const enTienda = stockPorProducto.get(returnItem.productId) || 0;
+          if (returnItem.returnedQuantity > enTienda) {
+            throw new Error(
+              `Solo hay ${enTienda} unidad(es) de ${returnItem.productName} en la tienda; ` +
+              `no se pueden devolver ${returnItem.returnedQuantity}.`
+            );
+          }
+        }
+
+        const totalDevueltoAntes = compra.totalReturned || 0;
+        tx.update(purchaseRef, {
+          returns: arrayUnion(purchaseReturn),
+          totalReturned: totalDevueltoAntes + totalRefund,
+          netCost: (compra.totalCost || 0) - (totalDevueltoAntes + totalRefund),
           updatedAt: new Date().toISOString()
         });
 
-        // Recalcular el precio promedio de compra si es necesario
-        // Esto es complejo porque necesitamos considerar todas las compras previas
-        // Por ahora, mantenemos el precio actual pero podríamos implementar
-        // un recálculo más sofisticado más adelante
-      }
-
-      await batch.commit();
+        for (const returnItem of returnItems) {
+          tx.update(doc(db, 'products', returnItem.productId), {
+            stock: increment(-returnItem.returnedQuantity),
+            updatedAt: new Date().toISOString()
+          });
+        }
+      });
 
       setLoading(false);
       return { success: true, returnId };

@@ -124,6 +124,10 @@ export function MyDailySales() {
     let otherProducts = 0;
     let technicalServices = 0;
     let layawayPayments = 0;
+    // Recargo que paga el cliente con tarjeta. Entra a la caja (está en el
+    // total vendido y en el método de pago) pero no pertenece a ningún tipo de
+    // producto: sin esta línea el desglose no sumaba el total.
+    let cardSurcharges = 0;
 
     // Debug: ver tipos de ventas
     const salesByType = myTodaySales.reduce((acc: any, sale: any) => {
@@ -170,6 +174,8 @@ export function MyDailySales() {
 
       // Ventas regulares: separar celulares de otros productos
       if (sale.type === 'regular' || !sale.type) {
+        cardSurcharges += sale.customerSurcharge || 0;
+
         // Verificar que items existe y es un array
         if (sale.items && Array.isArray(sale.items) && sale.items.length > 0) {
           sale.items.forEach((item: any) => {
@@ -210,11 +216,13 @@ export function MyDailySales() {
         otherProducts,
         technicalServices,
         layawayPayments,
+        cardSurcharges,
         percentages: {
           cellphones: totalRevenue > 0 ? (cellphones / totalRevenue) * 100 : 0,
           otherProducts: totalRevenue > 0 ? (otherProducts / totalRevenue) * 100 : 0,
           technicalServices: totalRevenue > 0 ? (technicalServices / totalRevenue) * 100 : 0,
           layawayPayments: totalRevenue > 0 ? (layawayPayments / totalRevenue) * 100 : 0,
+          cardSurcharges: totalRevenue > 0 ? (cardSurcharges / totalRevenue) * 100 : 0,
         }
       }
     };
@@ -457,6 +465,24 @@ export function MyDailySales() {
                 {formatCurrency(todayStats.breakdown.layawayPayments)}
               </p>
             </div>
+
+            {/* Recargos por tarjeta */}
+            {todayStats.breakdown.cardSurcharges > 0 && (
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-all">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-2xl">💳</span>
+                    <span className="text-sm font-medium text-gray-700">Recargos por tarjeta</span>
+                  </div>
+                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded-full">
+                    {todayStats.breakdown.percentages.cardSurcharges.toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-2xl font-bold text-indigo-700">
+                  {formatCurrency(todayStats.breakdown.cardSurcharges)}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
