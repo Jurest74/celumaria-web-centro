@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { authService, User } from '../services/firebase/auth';
+import { authService, User, MENSAJE_USUARIO_DESACTIVADO } from '../services/firebase/auth';
 import { AppUser, UserPermissions } from '../types';
 import { DEFAULT_PERMISSIONS, createPermissionHelpers } from '../utils/permissions';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { bogotaDateKey, isUpcomingBirthday } from '../utils/dateUtils';
 
@@ -152,6 +152,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return unsubscribe;
   }, []);
+
+  // Si un administrador desactiva al usuario mientras tiene la sesión abierta,
+  // se le cierra en ese momento. Antes seguía trabajando hasta que recargara la
+  // página, y ni siquiera así: el estado de activo no se revisaba nunca.
+  useEffect(() => {
+    if (!user?.id) return;
+    return onSnapshot(doc(db, 'users', user.id), (snap) => {
+      if (snap.exists() && snap.data().isActive === false) {
+        localStorage.setItem('sessionExpiredMsg', MENSAJE_USUARIO_DESACTIVADO);
+        authService.signOut().finally(() => {
+          setUser(null);
+          setAppUser(null);
+          setPermissions(null);
+          setPermissionHelpers(null);
+        });
+      }
+    }, (error) => {
+      console.error('Error escuchando el estado del usuario:', error);
+    });
+  }, [user?.id]);
 
   const login = async (email: string, password: string): Promise<string | null> => {
     try {

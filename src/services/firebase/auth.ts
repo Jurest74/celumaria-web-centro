@@ -14,7 +14,10 @@ export interface User {
   username: string;
   email: string;
   role: 'admin' | 'user';
+  isActive: boolean;
 }
+
+export const MENSAJE_USUARIO_DESACTIVADO = 'Tu usuario está desactivado. Habla con el administrador.';
 
 // Create user profile in Firestore
 const createUserProfile = async (firebaseUser: FirebaseUser, additionalData: any = {}) => {
@@ -52,7 +55,9 @@ const getUserProfile = async (uid: string): Promise<User | null> => {
         id: uid,
         username: data.username || data.email?.split('@')[0] || 'Usuario',
         email: data.email,
-        role: data.role || 'user'
+        role: data.role || 'user',
+        // Solo un false explícito desactiva: los usuarios antiguos no traen el campo.
+        isActive: data.isActive !== false
       };
     }
   } catch (error) {
@@ -68,6 +73,12 @@ export const authService = {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const userProfile = await getUserProfile(userCredential.user.uid);
+      // Desactivar un usuario en Gestión de Usuarios guardaba isActive: false,
+      // pero nada lo revisaba: la persona podía seguir entrando y vendiendo.
+      if (userProfile && !userProfile.isActive) {
+        await signOut(auth);
+        throw Object.assign(new Error(MENSAJE_USUARIO_DESACTIVADO), { code: 'auth/usuario-desactivado' });
+      }
       return userProfile;
     } catch (error) {
       console.error('Error signing in:', error);
@@ -85,7 +96,8 @@ export const authService = {
         id: userCredential.user.uid,
         username,
         email,
-        role
+        role,
+        isActive: true
       };
     } catch (error) {
       console.error('Error signing up:', error);
@@ -108,6 +120,13 @@ export const authService = {
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const userProfile = await getUserProfile(firebaseUser.uid);
+        // Una sesión guardada de un usuario que ya fue desactivado no se restaura.
+        if (userProfile && !userProfile.isActive) {
+          localStorage.setItem('sessionExpiredMsg', MENSAJE_USUARIO_DESACTIVADO);
+          await signOut(auth);
+          callback(null);
+          return;
+        }
         callback(userProfile);
       } else {
         callback(null);
