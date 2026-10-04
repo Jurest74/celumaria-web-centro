@@ -152,7 +152,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
               </div>
               <div className="ml-3 flex-1">
                 <h4 className="text-sm font-semibold">{notification.title}</h4>
-                <p className="text-sm mt-1">{notification.message}</p>
+                <p className="text-sm mt-1 whitespace-pre-line">{notification.message}</p>
               </div>
               <button
                 onClick={() => removeNotification(notification.id)}

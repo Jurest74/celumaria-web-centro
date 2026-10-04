@@ -3,7 +3,7 @@ import { Plus, Search, Edit, Trash2, AlertTriangle, Package, TrendingUp, Filter,
 import { addDoc, collection } from 'firebase/firestore';
 import { useAppSelector } from '../hooks/useAppSelector';
 import { selectActiveCategories } from '../store/selectors';
-import { productsService } from '../services/firebase/firestore';
+import { productsService, mensajeProductoSeparado } from '../services/firebase/firestore';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { db } from '../config/firebase';
 import { useFirebase } from '../contexts/FirebaseContext';
@@ -18,7 +18,7 @@ import { getColombiaTimestamp } from '../utils/dateUtils';
 export function Inventory() {
   // Redux selectors para estadísticas generales
   const categories = useAppSelector(selectActiveCategories);
-  const { showSuccess, showError, showConfirm } = useNotification();
+  const { showSuccess, showError, showWarning, showConfirm } = useNotification();
   const firebase = useFirebase();
   const { appUser } = useAuth();
   
@@ -305,6 +305,19 @@ export function Inventory() {
   };
 
   const handleDelete = async (product: Product) => {
+    // Se avisa antes de pedir confirmación (el servicio igual lo impide).
+    try {
+      const planes = await productsService.separadoEnPlanes(product.id);
+      if (planes.length > 0) {
+        showWarning('No se puede eliminar', mensajeProductoSeparado(product.name, planes), 15000);
+        return;
+      }
+    } catch (error) {
+      console.error('Error revisando planes separe del producto:', error);
+      showError('Error al eliminar', 'No se pudo verificar si el producto está separado. Inténtalo de nuevo.');
+      return;
+    }
+
     showConfirm(
       'Confirmar eliminación',
       `¿Estás seguro de que quieres eliminar el producto "${product.name}"? Esta acción no se puede deshacer.`,
@@ -328,7 +341,7 @@ export function Inventory() {
           console.error('Error deleting product:', error);
           showError(
             'Error al eliminar',
-            'No se pudo eliminar el producto. Inténtalo de nuevo.'
+            error instanceof Error && error.message ? error.message : 'No se pudo eliminar el producto. Inténtalo de nuevo.'
           );
         } finally {
           setIsDeletingProduct(false);

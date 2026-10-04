@@ -29,7 +29,8 @@ import type {
   DashboardStats,
   Purchase
 } from '../../types';
-import { getColombiaTimestamp, startOfDayBogota, endOfDayBogota, bogotaDateKey } from '../../utils/dateUtils';
+import { getColombiaTimestamp, startOfDayBogota, endOfDayBogota, bogotaDateKey, formatDisplayDate } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/currency';
 import { agruparPedidos, faltantesDeStock, StockInsuficienteError, type Pedido } from '../../utils/stock';
 
 // Espera confirmación del servidor con timeout de 15 segundos
@@ -382,7 +383,65 @@ export async function conteosInventario(umbralStockBajo = 5): Promise<{
   };
 }
 
+export interface UnidadesSeparadas {
+  layawayId: string;
+  customerName: string;
+  createdAt: string;
+  remainingBalance: number;
+  unidades: number;
+}
+
+/**
+ * Mensaje para cuando un producto no se puede eliminar por estar separado.
+ * Los planes no tienen número visible, así que cada uno se identifica como
+ * aparece en su tarjeta: cliente, fecha y saldo pendiente.
+ */
+export function mensajeProductoSeparado(nombre: string, planes: UnidadesSeparadas[]): string {
+  const unidades = planes.reduce((sum, p) => sum + p.unidades, 0);
+  const lista = planes.slice(0, 8).map(p =>
+    `• ${p.customerName} — creado el ${formatDisplayDate(p.createdAt)} — ` +
+    `${p.unidades} unidad(es) — saldo pendiente ${formatCurrency(p.remainingBalance)}`
+  );
+  if (planes.length > 8) lista.push(`• y ${planes.length - 8} plan(es) más`);
+  return [
+    `No se puede eliminar "${nombre}": tiene ${unidades} unidad(es) separada(s) sin recoger ` +
+      (planes.length === 1 ? 'en este plan separe:' : `en estos ${planes.length} planes separe:`),
+    ...lista,
+    `Para verlos, busca "${nombre}" en Plan Separe. Se podrá eliminar cuando el cliente recoja ` +
+      'esas unidades o se cancele el plan.'
+  ].join('\n');
+}
+
 export const productsService = {
+  /**
+   * Planes separe activos con unidades de este producto separadas y sin
+   * recoger. Esas unidades ya se descontaron del stock pero siguen en la
+   * tienda, y al cancelar el plan vuelven al inventario. Si el producto se
+   * borra no tienen a dónde volver y se pierden.
+   */
+  async separadoEnPlanes(productId: string): Promise<UnidadesSeparadas[]> {
+    const snap = await getDocs(
+      query(collection(db, COLLECTIONS.LAYAWAYS), where('status', '==', 'active'))
+    );
+    const planes: UnidadesSeparadas[] = [];
+    for (const planDoc of snap.docs) {
+      const plan = planDoc.data() as LayawayPlan;
+      const unidades = (plan.items || [])
+        .filter(item => item.productId === productId)
+        .reduce((sum, item) => sum + Math.max(0, item.quantity - (item.pickedUpQuantity || 0)), 0);
+      if (unidades > 0) {
+        planes.push({
+          layawayId: planDoc.id,
+          customerName: plan.customerName || 'Cliente',
+          createdAt: convertTimestamp(plan.createdAt),
+          remainingBalance: plan.remainingBalance || 0,
+          unidades
+        });
+      }
+    }
+    return planes;
+  },
+
   // Get all products
   async getAll(): Promise<Product[]> {
     const querySnapshot = await getDocs(
@@ -468,6 +527,11 @@ export const productsService = {
     const productRef = doc(db, COLLECTIONS.PRODUCTS, id);
     const productDoc = await getDoc(productRef);
     const productData = productDoc.data() as Product;
+
+    const planes = await productsService.separadoEnPlanes(id);
+    if (planes.length > 0) {
+      throw new Error(mensajeProductoSeparado(productData?.name || 'el producto', planes));
+    }
     
     const batch = writeBatch(db);
     

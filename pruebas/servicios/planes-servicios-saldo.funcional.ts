@@ -5,6 +5,7 @@ import { db } from '../../src/config/firebase';
 import {
   customersService,
   layawaysService,
+  productsService,
   registrarPago,
   salesService,
   technicalServicesService,
@@ -13,7 +14,7 @@ import { COLLECTIONS } from '../../src/services/firebase/collections';
 import { StockInsuficienteError } from '../../src/utils/stock';
 import type { LayawayItem, LayawayPlan, TechnicalService } from '../../src/types';
 import {
-  cortesia, crearCliente, crearProducto, documentos, limpiarEmulador, saldoDe, stockDe, ventaRegular, type ProductoPrueba
+  cortesia, crearCliente, crearProducto, documentos, limpiarEmulador, linea, saldoDe, stockDe, ventaRegular, type ProductoPrueba
 } from './ayudas';
 
 beforeEach(limpiarEmulador);
@@ -261,5 +262,57 @@ describe('Saldo a favor', () => {
     await Promise.all([customersService.addCredit(clienteId, 5000), customersService.addCredit(clienteId, 7000)]);
 
     expect(await saldoDe(clienteId)).toBe(22000);
+  });
+});
+
+describe('Producto separado en plan separe', () => {
+  it('las unidades separadas no se pueden vender', async () => {
+    const clienteId = await crearCliente('Ana');
+    const celular = await crearProducto('Celular', 3, 500000, 800000);
+    await layawaysService.add(plan(clienteId, [itemPlan(celular, 2)]));
+    expect(await stockDe(celular.id)).toBe(1);
+
+    await expect(salesService.add(ventaRegular([linea(celular, 2)]))).rejects.toBeInstanceOf(StockInsuficienteError);
+    await salesService.add(ventaRegular([linea(celular, 1)]));
+    expect(await stockDe(celular.id)).toBe(0);
+  });
+
+  it('no se puede eliminar mientras tenga unidades sin recoger, y al cancelar el plan vuelven al stock', async () => {
+    const clienteId = await crearCliente('Ana');
+    const celular = await crearProducto('Celular', 3, 500000, 800000);
+    const planId = await layawaysService.add(plan(clienteId, [itemPlan(celular, 2)]));
+
+    await expect(productsService.delete(celular.id)).rejects.toThrow(/2 unidad\(es\) separada\(s\) sin recoger/);
+    expect((await getDoc(doc(db, COLLECTIONS.PRODUCTS, celular.id))).exists()).toBe(true);
+
+    const resultado = await layawaysService.cancel(planId);
+    expect(resultado.unidadesDevueltas).toBe(2);
+    expect(await stockDe(celular.id)).toBe(3);
+
+    // Con el plan cancelado ya no hay nada separado: se deja eliminar.
+    await productsService.delete(celular.id);
+    expect((await getDoc(doc(db, COLLECTIONS.PRODUCTS, celular.id))).exists()).toBe(false);
+  });
+
+  it('el aviso dice en qué planes está separado: cliente, fecha, unidades y saldo', async () => {
+    const celular = await crearProducto('Celular', 5, 500000, 800000);
+    await layawaysService.add(plan(await crearCliente('Ana'), [itemPlan(celular, 2)]));
+    await layawaysService.add({ ...plan(await crearCliente('Pedro'), [itemPlan(celular, 1)]), customerName: 'Pedro Gómez' });
+
+    const mensaje = await productsService.delete(celular.id).then(() => '', (e: Error) => e.message);
+    console.log(mensaje);
+    expect(mensaje).toContain('tiene 3 unidad(es) separada(s) sin recoger en estos 2 planes separe:');
+    expect(mensaje).toMatch(/• Cliente de prueba — creado el .+ — 2 unidad\(es\) — saldo pendiente \$\s?1\.600\.000/);
+    expect(mensaje).toMatch(/• Pedro Gómez — creado el .+ — 1 unidad\(es\) — saldo pendiente \$\s?800\.000/);
+    expect(mensaje).toContain('busca "Celular" en Plan Separe');
+  });
+
+  it('si el cliente ya recogió todo, el producto se puede eliminar', async () => {
+    const clienteId = await crearCliente('Ana');
+    const celular = await crearProducto('Celular', 3, 500000, 800000);
+    await layawaysService.add(plan(clienteId, [itemPlan(celular, 2, 2)]));
+
+    await productsService.delete(celular.id);
+    expect((await getDoc(doc(db, COLLECTIONS.PRODUCTS, celular.id))).exists()).toBe(false);
   });
 });
