@@ -119,6 +119,31 @@ describe('devolucion: se recalcula todo en proporcion', () => {
   });
 });
 
+describe('venta pagada en parte con saldo a favor', () => {
+  it('con tarjeta, el recargo y la comisión corren solo sobre lo que se cobra con tarjeta', () => {
+    const conSaldo = calculateSaleTotal([item(100000, 60000, 1)], 0, 'tarjeta', [], false, 40000);
+    const soloTarjeta = calculateSaleTotal([item(60000, 0, 1)], 0, 'tarjeta', [], false);
+    expect(conSaldo.total).toBe(100000);
+    expect(conSaldo.customerSurcharge).toBe(soloTarjeta.customerSurcharge);
+    expect(conSaldo.totalCommissions).toBe(soloTarjeta.totalCommissions);
+    expect(conSaldo.finalTotal).toBe(100000 + soloTarjeta.customerSurcharge);
+  });
+
+  it('si el saldo cubre todo, no hay recargo ni comisión', () => {
+    const r = calculateSaleTotal([item(100000, 60000, 1)], 0, 'tarjeta', [], false, 150000);
+    expect(r.customerSurcharge).toBe(0);
+    expect(r.totalCommissions).toBe(0);
+    expect(r.finalTotal).toBe(100000);
+  });
+
+  it('en pagos múltiples, el recargo se mide contra lo que queda después del saldo', () => {
+    const r = calculateSaleTotal([item(100000, 60000, 1)], 0, 'efectivo',
+      [{ method: 'efectivo', amount: 60000 }], true, 40000);
+    expect(r.customerSurcharge).toBe(0);
+    expect(r.finalTotal).toBe(100000);
+  });
+});
+
 describe('saldo a favor: no se cuenta dos veces aunque venga en la lista', () => {
   it('una entrada credit ya presente no se suma de nuevo', () => {
     const metodos = [

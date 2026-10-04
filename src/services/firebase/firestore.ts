@@ -1415,6 +1415,35 @@ export const layawaysService = {
           credit: ((customerSnap.data() as any).credit || 0) + saldoAcreditado,
           updatedAt: getColombiaTimestamp()
         });
+
+        // Lo que pasa a saldo a favor deja de ser ingreso: los abonos del plan
+        // ya contaron como venta, y cuando el cliente use el saldo contará otra
+        // vez. Sin este registro negativo esa plata se contaba dos veces
+        // (comprobado: 200.000 abonados, plan cancelado y saldo usado en otro
+        // plan mostraban 400.000 en ventas).
+        tx.set(doc(collection(db, COLLECTIONS.SALES)), removeUndefined({
+          type: 'layaway_payment',
+          isLayaway: true,
+          isRefund: true,
+          layawayId,
+          items: [],
+          subtotal: -saldoAcreditado,
+          discount: 0,
+          tax: 0,
+          total: -saldoAcreditado,
+          totalCost: 0,
+          totalRevenue: -saldoAcreditado,
+          totalProfit: 0,
+          profitMargin: 0,
+          paymentMethod: 'credit',
+          paymentMethods: [{ method: 'credit', amount: -saldoAcreditado, commission: 0 }],
+          totalCommissions: 0,
+          customerId: plan.customerId,
+          customerName: plan.customerName,
+          notes: `↩️ Plan separe cancelado: ${formatCurrency(saldoAcreditado)} pasan a saldo a favor de ${plan.customerName}`,
+          createdAt: getColombiaTimestamp(),
+          updatedAt: getColombiaTimestamp()
+        }));
       }
 
       return {

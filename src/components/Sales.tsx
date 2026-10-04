@@ -3,7 +3,7 @@ import { Plus, Minus, ShoppingCart, DollarSign, Receipt, X, User, Search, Wallet
 import { useAppSelector } from '../hooks/useAppSelector';
 import { useSectionRealtime } from '../hooks/useOnDemandData';
 import { selectProducts } from '../store/selectors';
-import { salesService, courtesiesService } from '../services/firebase/firestore';
+import { salesService, courtesiesService, customersService } from '../services/firebase/firestore';
 import { SaleItem } from '../types';
 import type { Customer } from '../types';
 import { formatCurrency, formatNumber, formatNumberInput, parseNumberInput } from '../utils/currency';
@@ -536,6 +536,14 @@ export function Sales() {
     );
   }, [customers, customerState.customerSearch]);
 
+  // Saldo a favor que se usa en esta venta: opcional (el cajero lo marca) y
+  // hasta el total, sin descuento por cobrar aparte.
+  const saldoDisponible = customerState.selectedCustomer?.credit || 0;
+  const totalSinRecargo = Math.max(0, saleForm.currentSale.reduce((sum, item) => sum + item.totalRevenue, 0) - saleForm.discount);
+  const creditoAplicado = customerState.applyCredit && saldoDisponible > 0
+    ? Math.min(saldoDisponible, totalSinRecargo)
+    : 0;
+
   // Cálculos memoizados
   const saleTotal = useMemo(() => 
     calcSaleTotal(
@@ -543,27 +551,25 @@ export function Sales() {
       saleForm.discount,
       saleForm.paymentMethod,
       saleForm.paymentMethods,
-      saleForm.useMultiplePayments
+      saleForm.useMultiplePayments,
+      creditoAplicado
     ),
-    [saleForm.currentSale, saleForm.discount, saleForm.paymentMethod, saleForm.paymentMethods, saleForm.useMultiplePayments]
+    [saleForm.currentSale, saleForm.discount, saleForm.paymentMethod, saleForm.paymentMethods, saleForm.useMultiplePayments, creditoAplicado]
   );
 
+  // Lo que queda por cobrar con dinero después del saldo a favor.
+  const porCobrar = Math.max(0, saleTotal.total - creditoAplicado);
 
   const totalPaidAmount = useMemo(() => 
-    getTotalPaidAmount(
-      saleForm.paymentMethods,
-      customerState.selectedCustomer?.credit || 0,
-      customerState.applyCredit,
-      saleTotal.total
-    ),
-    [saleForm.paymentMethods, customerState.selectedCustomer?.credit, customerState.applyCredit, saleTotal.total]
+    getTotalPaidAmount(saleForm.paymentMethods, 0, false, saleTotal.total) + creditoAplicado,
+    [saleForm.paymentMethods, saleTotal.total, creditoAplicado]
   );
 
   // Lo que falta del precio. Un pago con tarjeta trae el recargo sumado, así
   // que solo su parte sin recargo descuenta del restante.
   const remainingAmount = useMemo(() => 
-    restantePorPagar(saleTotal.total, saleForm.paymentMethods),
-    [saleTotal.total, saleForm.paymentMethods]
+    restantePorPagar(porCobrar, saleForm.paymentMethods),
+    [porCobrar, saleForm.paymentMethods]
   );
 
   // Lo máximo que se puede teclear con el método elegido (con tarjeta, el
@@ -875,6 +881,19 @@ export function Sales() {
         saleData.useMultiplePayments = true;
       }
 
+      // Saldo a favor: va en la lista de pagos junto a lo que se cobró con
+      // dinero, y se descuenta del cliente justo antes de guardar la venta.
+      if (creditoAplicado > 0) {
+        const pagosConDinero = saleForm.useMultiplePayments
+          ? saleForm.paymentMethods.filter(p => p.method !== 'credit')
+          : porCobrar > 0
+            ? [{ method: saleForm.paymentMethod, amount: porCobrar + customerSurcharge, commission: totalCommissions }]
+            : [];
+        saleData.paymentMethods = [{ method: 'credit', amount: creditoAplicado }, ...pagosConDinero];
+        saleData.useMultiplePayments = true;
+        saleData.paymentMethod = pagosConDinero[0]?.method || 'credit';
+      }
+
       // El finalTotal incluye el recargo que paga el cliente por el metodo de
       // pago. Se guarda en los dos modos: antes solo se escribia en pagos
       // multiples, asi que una venta con tarjeta en pago unico quedaba
@@ -906,7 +925,29 @@ export function Sales() {
         saleData.realProfit = totalProfit - courtesyTotalCost;
       }
 
-      const saleId = await salesService.add(saleData);
+      // El saldo se descuenta contra el dato fresco (no se puede gastar dos
+      // veces); si la venta no queda, se le devuelve al cliente.
+      const clienteSaldo = customerState.selectedCustomer;
+      if (creditoAplicado > 0) {
+        await customersService.useCredit(clienteSaldo.id, creditoAplicado);
+      }
+      let saleId: string;
+      try {
+        saleId = await salesService.add(saleData);
+      } catch (error) {
+        if (creditoAplicado > 0) {
+          try {
+            await customersService.addCredit(clienteSaldo.id, creditoAplicado);
+          } catch (errorDevolucion) {
+            console.error('Error devolviendo el saldo a favor:', errorDevolucion);
+            throw new Error(
+              `${error instanceof Error ? error.message : 'La venta no se guardó'}. ` +
+              `Además no se pudo devolver ${formatCurrency(creditoAplicado)} de saldo a favor al cliente: agrégaselo desde Clientes.`
+            );
+          }
+        }
+        throw error;
+      }
 
       // Desde aquí la venta YA QUEDÓ guardada, con el stock descontado. Si el
       // registro de cortesías falla no se puede mostrar "Error al procesar
@@ -980,7 +1021,7 @@ export function Sales() {
     } finally {
       updateUIState({ isProcessing: false });
     }
-  }, [saleForm, customerState, saleTotal, updateUIState, updateCustomerState, showWarning, showError, showSuccess, appUser]);
+  }, [saleForm, customerState, saleTotal, creditoAplicado, porCobrar, updateUIState, updateCustomerState, showWarning, showError, showSuccess, appUser]);
 
   // Usar los valores memoizados del saleTotal
   const { subtotal, total } = saleTotal;
@@ -1061,6 +1102,24 @@ export function Sales() {
                     {customerState.selectedCustomer.phone && <span className="mr-3">Tel: {customerState.selectedCustomer.phone}</span>}
                     {customerState.selectedCustomer.email && <span>Email: {customerState.selectedCustomer.email}</span>}
                   </div>
+                  {saldoDisponible > 0 && (
+                    <div className="mt-2 p-2 rounded-md bg-green-50 border border-green-300">
+                      <div className="text-sm font-semibold text-green-800">
+                        Este cliente tiene {formatCurrency(saldoDisponible)} de saldo a favor
+                      </div>
+                      <label className="mt-1 flex items-center text-sm text-green-900">
+                        <input
+                          id="usarSaldoVenta"
+                          type="checkbox"
+                          checked={customerState.applyCredit}
+                          onChange={(e) => updateCustomerState({ applyCredit: e.target.checked })}
+                          disabled={uiState.isProcessing}
+                          className="h-4 w-4 mr-2 text-green-600 border-gray-300 rounded"
+                        />
+                        Usar saldo a favor en esta venta
+                      </label>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1316,6 +1375,18 @@ export function Sales() {
                 <span>TOTAL</span>
                 <span>{formatCurrency(total)}</span>
               </div>
+              {creditoAplicado > 0 && (
+                <div className="mb-4 -mt-2 space-y-1 text-sm">
+                  <div className="flex justify-between text-green-700 font-semibold">
+                    <span>Saldo a favor aplicado</span>
+                    <span>-{formatCurrency(creditoAplicado)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold">
+                    <span>A pagar</span>
+                    <span>{formatCurrency(porCobrar)}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Método de pago */}
               <div className="mb-4">
@@ -1488,7 +1559,7 @@ export function Sales() {
                   uiState.isProcessing ||
                   !customerState.selectedCustomer ||
                   saleForm.currentSale.length === 0 ||
-                  (saleForm.useMultiplePayments && (saleForm.paymentMethods.length === 0 || remainingAmount > 0.01))
+                  (saleForm.useMultiplePayments && ((saleForm.paymentMethods.length === 0 && porCobrar > 0) || remainingAmount > 0.01))
                 }
                 className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-gray-400 flex items-center justify-center space-x-2"
               >

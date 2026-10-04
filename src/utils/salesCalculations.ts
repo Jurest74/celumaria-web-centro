@@ -25,26 +25,31 @@ export const calculateSaleTotal = (
   discount: number,
   paymentMethod: string,
   paymentMethods: ExtendedPaymentMethod[],
-  useMultiplePayments: boolean
+  useMultiplePayments: boolean,
+  // Parte del total que se paga con saldo a favor. El recargo y la comisión
+  // del método de pago solo corren sobre lo que se cobra con ese método.
+  creditoAplicado = 0
 ): SaleTotal => {
   const subtotal = currentSale.reduce((sum, item) => sum + item.totalRevenue, 0);
   const totalCost = currentSale.reduce((sum, item) => sum + item.totalCost, 0);
   const appliedDiscount = Math.min(discount, subtotal);
   const total = subtotal - appliedDiscount;
+  const porCobrar = Math.max(0, total - Math.min(creditoAplicado, total));
   
   let totalCommissions = 0;
   let customerSurcharge = 0;
   
   if (useMultiplePayments) {
-    totalCommissions = paymentMethods.reduce((sum, payment) => sum + (payment.commission || 0), 0);
+    const pagos = paymentMethods.filter(payment => payment.method !== 'credit');
+    totalCommissions = pagos.reduce((sum, payment) => sum + (payment.commission || 0), 0);
     // El cajero teclea el monto con el recargo ya sumado, asi que el recargo
     // es lo que entro por encima del precio. Calcularlo como un 3% del monto
     // tecleado lo aplicaba sobre una cifra que ya lo incluia.
-    const cobrado = paymentMethods.reduce((sum, payment) => sum + payment.amount, 0);
-    customerSurcharge = Math.max(0, cobrado - total);
+    const cobrado = pagos.reduce((sum, payment) => sum + payment.amount, 0);
+    customerSurcharge = Math.max(0, cobrado - porCobrar);
   } else {
-    totalCommissions = calculatePaymentCommission(paymentMethod, total);
-    customerSurcharge = calculateCustomerSurcharge(paymentMethod, total);
+    totalCommissions = calculatePaymentCommission(paymentMethod, porCobrar);
+    customerSurcharge = calculateCustomerSurcharge(paymentMethod, porCobrar);
   }
 
   const finalTotal = total + customerSurcharge;
