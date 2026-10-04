@@ -361,6 +361,10 @@ export function TechnicalService() {
       await technicalServicesService.update(selectedTechnicalService.id, {
         status: 'completed',
         completedAt: getColombiaTimestamp(),
+        // Liquidación de Técnicos lista los pendientes por esta marca, sin
+        // depender de la fecha: un servicio terminado hace días y sin liquidar
+        // no se esconde. Se apaga al liquidarlo.
+        pendienteLiquidacion: true,
         updatedAt: getColombiaTimestamp(),
         // Auditoría de finalización
         completedBy: appUser?.uid,
@@ -3671,7 +3675,7 @@ export function TechnicalService() {
               <div className="mb-6">
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="font-medium text-gray-900">Repuestos del Servicio</h4>
-                  {selectedTechnicalService.status !== 'delivered' && selectedTechnicalService.status !== 'cancelled' && (
+                  {selectedTechnicalService.status !== 'delivered' && selectedTechnicalService.status !== 'cancelled' && !selectedTechnicalService.liquidationId && (
                     <button
                       onClick={() => setShowAddParts(true)}
                       className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors flex items-center space-x-1"
@@ -4230,6 +4234,11 @@ export function TechnicalService() {
                     COLLECTIONS.TECHNICAL_SERVICES,
                     selectedTechnicalService.id,
                     (actual) => {
+                      // Ya liquidado al técnico: el servicio queda cerrado. Un
+                      // repuesto nuevo bajaría la mano de obra que ya se pagó.
+                      if (actual.liquidationId) {
+                        throw new Error('Este servicio ya se le liquidó al técnico y quedó cerrado: no se le pueden agregar repuestos.');
+                      }
                       const updatedItems = [...(actual.items || []), newPart];
                       const additionalAmount = newPart.totalCost;
                       // Recalcular shares si usa el nuevo sistema de costos

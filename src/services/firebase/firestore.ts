@@ -1809,6 +1809,10 @@ export const technicalServicesService = {
       }
 
       const servicio = snap.data() as TechnicalService;
+      // Quitar el pago reabriría un servicio que ya se le liquidó al técnico.
+      if (servicio.liquidationId) {
+        throw new Error('Este pago es de un servicio técnico que ya se le liquidó al técnico, y ese servicio quedó cerrado. No se eliminó nada.');
+      }
       const pagos = servicio.payments || [];
       const candidatos = pagos.filter(p => p.amount === monto);
       if (candidatos.length === 0) {

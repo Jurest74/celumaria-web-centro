@@ -276,6 +276,7 @@ export interface TechnicalService {
   cancelledByName?: string; // Nombre del usuario que canceló el servicio
   liquidationId?: string; // ID de la liquidación si ya fue liquidado
   liquidatedAt?: string; // Fecha cuando fue liquidado
+  pendienteLiquidacion?: boolean; // Terminado y aún sin liquidar al técnico
   // Cortesías
   courtesyItems?: CourtesyItem[]; // Productos dados como cortesía
   courtesyTotalValue?: number; // Valor total de cortesías

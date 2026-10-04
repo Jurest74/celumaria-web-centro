@@ -15,6 +15,7 @@ export function TechnicianLiquidationComponent() {
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [completedServices, setCompletedServices] = useState<TechnicalService[]>([]);
+  const [marcadosPendientes, setMarcadosPendientes] = useState<TechnicalService[]>([]);
   const [liquidations, setLiquidations] = useState<TechnicianLiquidation[]>([]);
   const [selectedTechnicianFilter, setSelectedTechnicianFilter] = useState('');
   // Fechas por defecto: día actual Colombia (no UTC, no del navegador)
@@ -94,6 +95,32 @@ export function TechnicianLiquidationComponent() {
     return () => unsubscribe();
   }, [rangoDesdeISO, rangoHastaISO]);
 
+  // Servicios marcados como pendientes de liquidar, de cualquier fecha. Solo
+  // se leen los que faltan por liquidar, así que no hace falta un rango.
+  // Antes los pendientes salían solo del rango de fechas (por defecto hoy), y
+  // un servicio terminado ayer y sin liquidar no aparecía.
+  useEffect(() => {
+    const q = query(
+      collection(db, COLLECTIONS.TECHNICAL_SERVICES),
+      where('pendienteLiquidacion', '==', true)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setMarcadosPendientes((snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as TechnicalService[]).filter(s => s.status === 'completed'));
+    }, (error) => {
+      console.error('Error escuchando servicios pendientes de liquidar:', error);
+      showError(
+        'No se pudieron cargar los servicios pendientes',
+        error.code === 'permission-denied'
+          ? 'La base de datos no permite leer estos datos. Avisa a quien administra el sistema.'
+          : error.message
+      );
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Cargar liquidaciones del rango
   useEffect(() => {
     // Mismo motivo que arriba: antes se traían todas las liquidaciones.
@@ -124,7 +151,11 @@ export function TechnicianLiquidationComponent() {
 
   // Servicios pendientes de liquidar (completados pero sin liquidar)
   const pendingServices = useMemo(() => {
-    return completedServices.filter(service => {
+    // Los marcados (de cualquier fecha) más los del rango, sin repetir. Los
+    // servicios terminados antes de existir la marca solo llegan por el rango.
+    const porId = new Map<string, TechnicalService>();
+    for (const service of [...completedServices, ...marcadosPendientes]) porId.set(service.id, service);
+    return Array.from(porId.values()).filter(service => {
       if (!service.technicianId || service.liquidationId) {
         return false; // Solo servicios con técnico asignado y que no hayan sido liquidados
       }
@@ -140,7 +171,7 @@ export function TechnicianLiquidationComponent() {
         return service.laborCost && service.laborCost > 0;
       }
     });
-  }, [completedServices]);
+  }, [completedServices, marcadosPendientes]);
 
   // Limpiar servicios seleccionados que ya no están disponibles
   useEffect(() => {
@@ -165,9 +196,10 @@ export function TechnicianLiquidationComponent() {
     return pendingServices.filter(service => {
       const matchesTechnician = !selectedTechnicianFilter || service.technicianId === selectedTechnicianFilter;
       
-      // Filtro de rango de fechas
+      // Filtro de rango de fechas. No aplica a los marcados como pendientes:
+      // un pendiente se ve sin importar cuándo se terminó.
       let matchesDateRange = true;
-      if (dateFromFilter || dateToFilter) {
+      if (!service.pendienteLiquidacion && (dateFromFilter || dateToFilter)) {
         const serviceDate = service.completedAt ? bogotaDateKey(new Date(service.completedAt)) : null;
         if (serviceDate) {
           if (dateFromFilter && serviceDate < dateFromFilter) matchesDateRange = false;
@@ -336,7 +368,8 @@ export function TechnicianLiquidationComponent() {
           for (const service of porLiquidar) {
             tx.update(doc(db, COLLECTIONS.TECHNICAL_SERVICES, service.id), {
               liquidationId: liquidationRef.id,
-              liquidatedAt: now
+              liquidatedAt: now,
+              pendienteLiquidacion: false
             });
           }
           return group.services.length - porLiquidar.length;
