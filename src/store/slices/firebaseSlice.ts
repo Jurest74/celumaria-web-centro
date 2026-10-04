@@ -57,6 +57,20 @@ const initialState: FirebaseState = {
   stats: { data: null, loading: false, error: null },
 };
 
+// Reemplaza o inserta respetando el orden por nombre con que llegan del
+// servidor (orderBy('name')), para que un cliente o categoría nueva no quede
+// al final de la lista.
+function upsertPorNombre<T extends { id: string; name: string }>(items: T[], item: T) {
+  const i = items.findIndex(x => x.id === item.id);
+  if (i >= 0) {
+    items[i] = item;
+    return;
+  }
+  const j = items.findIndex(x => x.name > item.name);
+  if (j < 0) items.push(item);
+  else items.splice(j, 0, item);
+}
+
 const firebaseSlice = createSlice({
   name: 'firebase',
   initialState,
@@ -75,6 +89,16 @@ const firebaseSlice = createSlice({
         product.updatedAt = new Date().toISOString();
       }
     },
+    // Un solo producto recién guardado (ver onDataChanged en FirebaseContext).
+    // La lista viene ordenada del más nuevo al más viejo.
+    upsertProduct: (state, action: PayloadAction<Product>) => {
+      const i = state.products.items.findIndex(p => p.id === action.payload.id);
+      if (i >= 0) state.products.items[i] = action.payload;
+      else state.products.items.unshift(action.payload);
+    },
+    removeProduct: (state, action: PayloadAction<string>) => {
+      state.products.items = state.products.items.filter(p => p.id !== action.payload);
+    },
     setProductsLoading: (state, action: PayloadAction<boolean>) => {
       state.products.loading = action.payload;
     },
@@ -88,6 +112,12 @@ const firebaseSlice = createSlice({
       state.categories.items = action.payload;
       state.categories.loading = false;
       state.categories.error = null;
+    },
+    upsertCategory: (state, action: PayloadAction<Category>) => {
+      upsertPorNombre(state.categories.items, action.payload);
+    },
+    removeCategory: (state, action: PayloadAction<string>) => {
+      state.categories.items = state.categories.items.filter(c => c.id !== action.payload);
     },
     setCategoriesLoading: (state, action: PayloadAction<boolean>) => {
       state.categories.loading = action.payload;
@@ -135,6 +165,12 @@ const firebaseSlice = createSlice({
       state.customers.items = action.payload;
       state.customers.loading = false;
       state.customers.error = null;
+    },
+    upsertCustomer: (state, action: PayloadAction<Customer>) => {
+      upsertPorNombre(state.customers.items, action.payload);
+    },
+    removeCustomer: (state, action: PayloadAction<string>) => {
+      state.customers.items = state.customers.items.filter(c => c.id !== action.payload);
     },
     setCustomersLoading: (state, action: PayloadAction<boolean>) => {
       state.customers.loading = action.payload;
@@ -211,10 +247,14 @@ const firebaseSlice = createSlice({
 
 export const {
   setProducts,
+  upsertProduct,
+  removeProduct,
   updateProductStock,
   setProductsLoading,
   setProductsError,
   setCategories,
+  upsertCategory,
+  removeCategory,
   setCategoriesLoading,
   setCategoriesError,
   setSales,
@@ -224,6 +264,8 @@ export const {
   setSalesLoading,
   setSalesError,
   setCustomers,
+  upsertCustomer,
+  removeCustomer,
   setCustomersLoading,
   setCustomersError,
   setLayaways,

@@ -168,6 +168,14 @@ export function Layaway() {
   const [selectedLayaway, setSelectedLayaway] = useState<LayawayPlan | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+
+  // El cliente elegido es una copia: se mantiene al día con el store para que
+  // el saldo a favor que se muestra sea el real después de usarlo o abonarlo.
+  useEffect(() => {
+    if (!selectedCustomer) return;
+    const actual = customers.find(c => c.id === selectedCustomer.id);
+    if (actual && actual !== selectedCustomer) setSelectedCustomer(actual);
+  }, [customers, selectedCustomer]);
   const [createLayawayItems, setCreateLayawayItems] = useState<any[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showAddProducts, setShowAddProducts] = useState(false);
@@ -694,34 +702,63 @@ export function Layaway() {
       // pago inicial: si el pago falla, el plan igual existe y debe verse.
       dispatch(upsertLayaway(newLayaway));
 
+      // Desde aquí el plan YA EXISTE. Si algo de lo que sigue falla no se
+      // puede mostrar "Error al crear": el formulario quedaría lleno, el
+      // usuario lo intentaría de nuevo y se crearía un plan duplicado, con
+      // el inventario descontado dos veces. Se cierra el formulario igual y se
+      // avisa exactamente qué quedó pendiente.
+      const pendientes: string[] = [];
+
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
         // El saldo a favor se descuenta contra el dato fresco, antes del pago.
         const creditoDescontado = creditUsedCreate > 0 && customer ? creditUsedCreate : 0;
-        if (creditoDescontado > 0) {
-          await customersService.useCredit(customer.id, creditoDescontado);
-        }
-
         try {
-          const resultadoPago = await processPayment(
-            newLayaway,
-            downPayment,
-            allPaymentMethodsCreate,
-            creditUsedCreate,
-            'Pago inicial'
-          );
-          dispatch(upsertLayaway(resultadoPago.updatedLayaway));
-        } catch (error) {
-          // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
           if (creditoDescontado > 0) {
-            await customersService.addCredit(customer.id, creditoDescontado);
+            await customersService.useCredit(customer.id, creditoDescontado);
           }
-          throw error;
+
+          try {
+            const resultadoPago = await processPayment(
+              newLayaway,
+              downPayment,
+              allPaymentMethodsCreate,
+              creditUsedCreate,
+              'Pago inicial'
+            );
+            dispatch(upsertLayaway(resultadoPago.updatedLayaway));
+          } catch (error) {
+            // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+            if (creditoDescontado > 0) {
+              try {
+                await customersService.addCredit(customer.id, creditoDescontado);
+              } catch (errorDevolucion) {
+                console.error('Error devolviendo el saldo a favor:', errorDevolucion);
+                pendientes.push(
+                  `no se le pudo devolver al cliente ${formatCurrency(creditoDescontado)} de saldo a favor ` +
+                  'que se le había descontado: agrégaselo desde Clientes'
+                );
+              }
+            }
+            throw error;
+          }
+        } catch (error) {
+          console.error('Error registrando el pago inicial:', error);
+          pendientes.push(
+            `el pago inicial de ${formatCurrency(downPayment)} NO quedó registrado ` +
+            `(${error instanceof Error ? error.message : 'error desconocido'}). Regístralo como abono`
+          );
         }
       }
       
       setShowCreateForm(false);
-      showSuccess(
+      if (pendientes.length > 0) {
+        showWarning(
+          'Plan separe creado, con pendientes',
+          `El plan para ${customer.name} quedó creado, pero ${pendientes.join('; ')}.`,
+          20000
+        );
+      } else showSuccess(
         'Plan separe creado',
         `Plan separe para ${customer.name} creado exitosamente por ${formatCurrency(totalAmount)}${
           downPayment > 0 ? `. Pago inicial de ${formatCurrency(downPayment)} registrado${

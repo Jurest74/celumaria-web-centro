@@ -114,6 +114,42 @@ const removeUndefined = (obj: any): any => {
 };
 
 // Categories Service
+// Avisos de escritura para quien tenga los datos en memoria (FirebaseContext).
+// Las pantallas leen clientes, categorías y productos de una caché de 10
+// minutos para no gastar la cuota de Firestore; sin este aviso, lo que se
+// guardaba no aparecía en ninguna pantalla hasta refrescar la página.
+export type SeccionCambiada = 'customers' | 'categories' | 'products';
+type CambioDeDatos = { seccion: SeccionCambiada; id: string };
+
+const dataChangedListeners = new Set<(cambio: CambioDeDatos) => void>();
+
+export function onDataChanged(listener: (cambio: CambioDeDatos) => void): () => void {
+  dataChangedListeners.add(listener);
+  return () => {
+    dataChangedListeners.delete(listener);
+  };
+}
+
+function notifyDataChanged(seccion: SeccionCambiada, ...ids: (string | undefined)[]) {
+  for (const id of ids) {
+    if (id) dataChangedListeners.forEach(listener => listener({ seccion, id }));
+  }
+}
+
+// Lee un solo documento con el mismo formato que los getAll. Devuelve null si
+// ya no existe.
+export async function leerDocumento<T>(coleccion: string, id: string): Promise<T | null> {
+  const snap = await getDoc(doc(db, coleccion, id));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    id: snap.id,
+    ...data,
+    createdAt: convertTimestamp(data.createdAt),
+    updatedAt: convertTimestamp(data.updatedAt)
+  } as T;
+}
+
 export const categoriesService = {
   async getAll(): Promise<Category[]> {
     try {
@@ -207,6 +243,7 @@ export const categoriesService = {
       console.log('📝 Datos a guardar:', categoryData);
 
       const docRef = await addDoc(collection(db, COLLECTIONS.CATEGORIES), categoryData);
+      notifyDataChanged('categories', docRef.id);
       
       console.log('✅ Categoría agregada exitosamente con ID:', docRef.id);
       return docRef.id;
@@ -251,6 +288,7 @@ export const categoriesService = {
       };
 
       await updateDoc(categoryRef, updateData);
+      notifyDataChanged('categories', id);
       console.log('✅ Categoría actualizada exitosamente:', id);
     } catch (error) {
       console.error('❌ Error actualizando categoría:', error);
@@ -281,6 +319,7 @@ export const categoriesService = {
       }
 
       await deleteDoc(categoryRef);
+      notifyDataChanged('categories', id);
       console.log('✅ Categoría eliminada exitosamente:', id);
     } catch (error) {
       console.error('❌ Error eliminando categoría:', error);
@@ -380,6 +419,8 @@ export const productsService = {
     
     await batch.commit();
     await waitForServerConfirmation();
+    notifyDataChanged('products', productRef.id);
+    notifyDataChanged('categories', product.categoryId);
     return productRef.id;
   },
 
@@ -416,6 +457,10 @@ export const productsService = {
     }
     
     await batch.commit();
+    notifyDataChanged('products', id);
+    if (updates.categoryId && currentData.categoryId !== updates.categoryId) {
+      notifyDataChanged('categories', currentData.categoryId, updates.categoryId);
+    }
   },
 
   // Delete product
@@ -439,6 +484,8 @@ export const productsService = {
     }
     
     await batch.commit();
+    notifyDataChanged('products', id);
+    notifyDataChanged('categories', productData.categoryId);
   },
 
   /**
@@ -473,6 +520,7 @@ export const productsService = {
       return actual;
     });
     await waitForServerConfirmation();
+    notifyDataChanged('products', productId);
     return anterior;
   },
 
@@ -493,6 +541,7 @@ export const productsService = {
       stock: increment(quantityChange),
       updatedAt: getColombiaTimestamp()
     });
+    notifyDataChanged('products', productId);
     
     console.log(`✅ Stock actualizado exitosamente para producto ${productId}`);
   },
@@ -1042,22 +1091,6 @@ export async function compromisosActivosDeCliente(customerId: string): Promise<{
   };
 }
 
-// Avisa a quien tenga los clientes en caché (FirebaseContext) que cambiaron.
-// Sin esto, un cliente recién creado no aparecía en Servicio técnico ni en
-// Ventas hasta recargar la página, porque la caché de 10 minutos seguía viva.
-const customersChangedListeners = new Set<() => void>();
-
-export function onCustomersChanged(listener: () => void): () => void {
-  customersChangedListeners.add(listener);
-  return () => {
-    customersChangedListeners.delete(listener);
-  };
-}
-
-function notifyCustomersChanged() {
-  customersChangedListeners.forEach(listener => listener());
-}
-
 export const customersService = {
   async getAll(): Promise<Customer[]> {
     const querySnapshot = await getDocs(
@@ -1078,7 +1111,7 @@ export const customersService = {
       createdAt: getColombiaTimestamp(),
       updatedAt: getColombiaTimestamp()
     });
-    notifyCustomersChanged();
+    notifyDataChanged('customers', docRef.id);
     return docRef.id;
   },
 
@@ -1088,7 +1121,7 @@ export const customersService = {
       ...updates,
       updatedAt: getColombiaTimestamp()
     });
-    notifyCustomersChanged();
+    notifyDataChanged('customers', id);
   },
 
   /**
@@ -1116,7 +1149,7 @@ export const customersService = {
         updatedAt: getColombiaTimestamp()
       });
     });
-    notifyCustomersChanged();
+    notifyDataChanged('customers', id);
   },
 
   // Suma saldo a favor sin partir de una lectura previa.
@@ -1126,12 +1159,12 @@ export const customersService = {
       credit: increment(amount),
       updatedAt: getColombiaTimestamp()
     });
-    notifyCustomersChanged();
+    notifyDataChanged('customers', id);
   },
 
   async delete(id: string): Promise<void> {
     await deleteDoc(doc(db, COLLECTIONS.CUSTOMERS, id));
-    notifyCustomersChanged();
+    notifyDataChanged('customers', id);
   },
 
   subscribe(callback: (customers: Customer[]) => void) {

@@ -894,25 +894,35 @@ export function Sales() {
 
       const saleId = await salesService.add(saleData);
 
+      // Desde aquí la venta YA QUEDÓ guardada, con el stock descontado. Si el
+      // registro de cortesías falla no se puede mostrar "Error al procesar
+      // venta": el carrito seguiría lleno y reintentar duplicaría la venta.
+      let cortesiasSinRegistrar = false;
+
       // Registrar cortesías en la colección de courtesies
       if (saleForm.courtesyItems.length > 0) {
-        const courtesyPromises = saleForm.courtesyItems.map(async (courtesyItem) => {
-          const courtesy: any = {
-            saleId,
-            salesPersonId: appUser?.uid || '',
-            salesPersonName: appUser?.displayName || appUser?.email || '',
-            item: courtesyItem,
-          };
+        try {
+          const courtesyPromises = saleForm.courtesyItems.map(async (courtesyItem) => {
+            const courtesy: any = {
+              saleId,
+              salesPersonId: appUser?.uid || '',
+              salesPersonName: appUser?.displayName || appUser?.email || '',
+              item: courtesyItem,
+            };
 
-          // Solo agregar campos opcionales si tienen valor
-          if (customerState.selectedCustomer?.id) courtesy.customerId = customerState.selectedCustomer.id;
-          if (customerState.selectedCustomer?.name) courtesy.customerName = customerState.selectedCustomer.name;
-          if (courtesyItem.reason) courtesy.reason = courtesyItem.reason;
+            // Solo agregar campos opcionales si tienen valor
+            if (customerState.selectedCustomer?.id) courtesy.customerId = customerState.selectedCustomer.id;
+            if (customerState.selectedCustomer?.name) courtesy.customerName = customerState.selectedCustomer.name;
+            if (courtesyItem.reason) courtesy.reason = courtesyItem.reason;
 
-          return courtesiesService.add(courtesy);
-        });
+            return courtesiesService.add(courtesy);
+          });
 
-        await Promise.all(courtesyPromises);
+          await Promise.all(courtesyPromises);
+        } catch (error) {
+          console.error('Error registrando cortesías de la venta:', error);
+          cortesiasSinRegistrar = true;
+        }
       }
 
       updateUIState({ lastSale: { ...saleData, id: saleId }, showInvoice: true });
@@ -934,10 +944,18 @@ export function Sales() {
       });
       updateUIState({ productSearch: '', lastAddedItem: null });
       
-      showSuccess(
-        'Venta completada',
-        `Venta por ${formatCurrency(total)} procesada exitosamente.`
-      );
+      if (cortesiasSinRegistrar) {
+        showWarning(
+          'Venta completada, con un pendiente',
+          `La venta por ${formatCurrency(total)} quedó guardada, pero algunas cortesías pueden no aparecer en el historial de cortesías.`,
+          20000
+        );
+      } else {
+        showSuccess(
+          'Venta completada',
+          `Venta por ${formatCurrency(total)} procesada exitosamente.`
+        );
+      }
 
       // Invalidar caché de ventas para que se vean inmediatamente en Gestión de Ventas
       firebase.invalidateSales();

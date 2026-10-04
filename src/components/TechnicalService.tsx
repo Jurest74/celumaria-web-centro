@@ -114,6 +114,14 @@ export function TechnicalService() {
     phone: '',
     address: ''
   });
+
+  // El cliente elegido es una copia: se mantiene al día con el store para que
+  // el saldo a favor que se muestra sea el real después de usarlo o abonarlo.
+  useEffect(() => {
+    if (!selectedCustomer) return;
+    const actual = customers.find(c => c.id === selectedCustomer.id);
+    if (actual && actual !== selectedCustomer) setSelectedCustomer(actual);
+  }, [customers, selectedCustomer]);
   const [createServiceParts, setCreateServiceParts] = useState<TechnicalServiceItem[]>([]);
   const [serviceCost, setServiceCost] = useState(0);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -1339,71 +1347,110 @@ export function TechnicalService() {
       // del pago inicial: si el pago falla, el servicio igual existe y debe verse.
       dispatch(upsertTechnicalService(newTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
 
+      // Desde aquí el servicio YA EXISTE. Si algo de lo que sigue falla no se
+      // puede mostrar "Error al crear": el formulario quedaría lleno, el
+      // usuario lo intentaría de nuevo y se crearía un servicio duplicado, con
+      // el inventario descontado dos veces. Se cierra el formulario igual y se
+      // avisa exactamente qué quedó pendiente.
+      const pendientes: string[] = [];
+
       // Procesar pago inicial si existe (usando la función unificada)
       if (downPayment > 0) {
         // El saldo a favor se descuenta contra el dato fresco, antes del pago.
         const creditoDescontado = creditUsedCreate > 0 && customer ? creditUsedCreate : 0;
-        if (creditoDescontado > 0) {
-          await customersService.useCredit(customer.id, creditoDescontado);
-        }
-
         try {
-          const resultadoPago = await processPayment(
-            newTechnicalService,
-            downPayment,
-            allPaymentMethodsCreate,
-            creditUsedCreate,
-            'Pago inicial'
-          );
-          dispatch(upsertTechnicalService(resultadoPago.updatedTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
-        } catch (error) {
-          // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
           if (creditoDescontado > 0) {
-            await customersService.addCredit(customer.id, creditoDescontado);
+            await customersService.useCredit(customer.id, creditoDescontado);
           }
-          throw error;
+
+          try {
+            const resultadoPago = await processPayment(
+              newTechnicalService,
+              downPayment,
+              allPaymentMethodsCreate,
+              creditUsedCreate,
+              'Pago inicial'
+            );
+            dispatch(upsertTechnicalService(resultadoPago.updatedTechnicalService as unknown as Parameters<typeof upsertTechnicalService>[0]));
+          } catch (error) {
+            // Si el pago no quedo, el cliente no pierde el saldo que se le desconto.
+            if (creditoDescontado > 0) {
+              try {
+                await customersService.addCredit(customer.id, creditoDescontado);
+              } catch (errorDevolucion) {
+                console.error('Error devolviendo el saldo a favor:', errorDevolucion);
+                pendientes.push(
+                  `no se le pudo devolver al cliente ${formatCurrency(creditoDescontado)} de saldo a favor ` +
+                  'que se le había descontado: agrégaselo desde Clientes'
+                );
+              }
+            }
+            throw error;
+          }
+        } catch (error) {
+          console.error('Error registrando el pago inicial:', error);
+          pendientes.push(
+            `el pago inicial de ${formatCurrency(downPayment)} NO quedó registrado ` +
+            `(${error instanceof Error ? error.message : 'error desconocido'}). Regístralo como abono`
+          );
         }
       }
 
       // Registrar cortesías en la colección de courtesies
       if (courtesyItems.length > 0) {
-        const courtesyPromises = courtesyItems.map(async (courtesyItem) => {
-          const courtesy = {
-            saleId: newTechnicalServiceId,
-            customerId: customer.id,
-            customerName: customer.name,
-            salesPersonId: appUser?.uid || '',
-            salesPersonName: appUser?.displayName || appUser?.email || '',
-            item: courtesyItem,
-            reason: courtesyItem.reason
-          };
-          return courtesiesService.add(courtesy);
-        });
-        await Promise.all(courtesyPromises);
+        try {
+          const courtesyPromises = courtesyItems.map(async (courtesyItem) => {
+            const courtesy = {
+              saleId: newTechnicalServiceId,
+              customerId: customer.id,
+              customerName: customer.name,
+              salesPersonId: appUser?.uid || '',
+              salesPersonName: appUser?.displayName || appUser?.email || '',
+              item: courtesyItem,
+              reason: courtesyItem.reason
+            };
+            return courtesiesService.add(courtesy);
+          });
+          await Promise.all(courtesyPromises);
+        } catch (error) {
+          console.error('Error registrando cortesías del servicio:', error);
+          pendientes.push('algunas cortesías pueden no aparecer en el historial de cortesías');
+        }
       }
 
       // Update customer information if provided
       if (editableCustomerInfo.phone || editableCustomerInfo.address) {
-        const customerUpdates: Partial<{ phone: string; address: string; updatedAt: string }> = {
-          updatedAt: getColombiaTimestamp()
-        };
+        try {
+          const customerUpdates: Partial<{ phone: string; address: string; updatedAt: string }> = {
+            updatedAt: getColombiaTimestamp()
+          };
         
-        if (editableCustomerInfo.phone && editableCustomerInfo.phone !== customer.phone) {
-          customerUpdates.phone = editableCustomerInfo.phone;
-        }
+          if (editableCustomerInfo.phone && editableCustomerInfo.phone !== customer.phone) {
+            customerUpdates.phone = editableCustomerInfo.phone;
+          }
         
-        if (editableCustomerInfo.address && editableCustomerInfo.address !== customer.address) {
-          customerUpdates.address = editableCustomerInfo.address;
-        }
+          if (editableCustomerInfo.address && editableCustomerInfo.address !== customer.address) {
+            customerUpdates.address = editableCustomerInfo.address;
+          }
         
-        if (Object.keys(customerUpdates).length > 1) { // More than just updatedAt
-          await customersService.update(customer.id, customerUpdates);
+          if (Object.keys(customerUpdates).length > 1) { // More than just updatedAt
+            await customersService.update(customer.id, customerUpdates);
+          }
+        } catch (error) {
+          console.error('Error actualizando datos del cliente:', error);
+          pendientes.push('no se actualizaron el teléfono y la dirección en la ficha del cliente');
         }
       }
       
       resetCreateForm();
       setShowCreateForm(false);
-      showSuccess(
+      if (pendientes.length > 0) {
+        showWarning(
+          'Servicio técnico creado, con pendientes',
+          `El servicio para ${customer.name} quedó creado, pero ${pendientes.join('; ')}.`,
+          20000
+        );
+      } else showSuccess(
         'Servicio técnico creado',
         `Servicio técnico para ${customer.name} creado exitosamente por ${formatCurrency(totalAmount)}${
           downPayment > 0 ? `. Pago inicial de ${formatCurrency(downPayment)} registrado${

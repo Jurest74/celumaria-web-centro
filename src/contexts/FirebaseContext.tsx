@@ -2,15 +2,21 @@ import React, { createContext, useContext, useState, useCallback, useRef, useEff
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import {
   setProducts,
+  upsertProduct,
+  removeProduct,
   setProductsLoading,
   setProductsError,
   setCategories,
+  upsertCategory,
+  removeCategory,
   setCategoriesLoading,
   setCategoriesError,
   setSales,
   setSalesLoading,
   setSalesError,
   setCustomers,
+  upsertCustomer,
+  removeCustomer,
   setCustomersLoading,
   setCustomersError,
   setLayaways,
@@ -31,8 +37,11 @@ import {
   layawaysService,
   technicalServicesService,
   statsService,
-  onCustomersChanged
+  onDataChanged,
+  leerDocumento
 } from '../services/firebase/firestore';
+import { COLLECTIONS } from '../services/firebase/collections';
+import type { Category, Customer, Product } from '../types';
 
 interface FirebaseContextType {
   // Funciones para cargar datos bajo demanda
@@ -76,9 +85,34 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     loadedSectionsRef.current.delete(section);
   }, []);
 
-  // Cualquier escritura de clientes (crear, editar, borrar, saldo a favor)
-  // vence la caché, para que la siguiente pantalla los traiga frescos.
-  useEffect(() => onCustomersChanged(() => invalidateCache('customers')), [invalidateCache]);
+  // Lo que se guarda se ve de inmediato en todas las pantallas, sin refrescar:
+  // después de cada escritura se relee solo ese documento (una lectura) y se
+  // actualiza en el store, en vez de volver a bajar la colección completa.
+  useEffect(() => onDataChanged(async ({ seccion, id }) => {
+    try {
+      switch (seccion) {
+        case 'customers': {
+          const actual = await leerDocumento<Customer>(COLLECTIONS.CUSTOMERS, id);
+          dispatch(actual ? upsertCustomer(actual) : removeCustomer(id));
+          break;
+        }
+        case 'categories': {
+          const actual = await leerDocumento<Category>(COLLECTIONS.CATEGORIES, id);
+          dispatch(actual ? upsertCategory(actual) : removeCategory(id));
+          break;
+        }
+        case 'products': {
+          const actual = await leerDocumento<Product>(COLLECTIONS.PRODUCTS, id);
+          dispatch(actual ? upsertProduct(actual) : removeProduct(id));
+          break;
+        }
+      }
+    } catch (error) {
+      // Si la relectura falla, al menos la próxima pantalla trae todo de nuevo.
+      console.error(`❌ Error releyendo ${seccion}/${id}:`, error);
+      invalidateCache(seccion);
+    }
+  }), [dispatch, invalidateCache]);
 
   const invalidateAllCache = useCallback(() => {
     console.log('🔄 Invalidando todo el caché');
