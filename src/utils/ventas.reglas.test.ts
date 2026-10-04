@@ -89,6 +89,34 @@ describe('devolucion: se recalcula todo en proporcion', () => {
     expect(r.finalTotal).toBe(100000);
     expect(r.totalProfit).toBe(40000);
   });
+
+  it('con pago combinado, cada método baja en la misma proporción y siguen sumando el total', () => {
+    const combinado = {
+      total: 200000, totalCost: 120000, customerSurcharge: 0, totalCommissions: 0, finalTotal: 200000,
+      paymentMethods: [{ method: 'efectivo', amount: 100000 }, { method: 'transferencia', amount: 100000 }],
+    };
+    const r = recalcularTrasDevolucion(combinado, { total: 100000, totalCost: 60000 });
+    expect(r.paymentMethods).toEqual([{ method: 'efectivo', amount: 50000 }, { method: 'transferencia', amount: 50000 }]);
+    expect(r.paymentMethods!.reduce((s, p) => s + p.amount, 0)).toBe(r.finalTotal);
+  });
+
+  it('con tarjeta en el pago combinado, el monto y la comisión de la tarjeta bajan igual', () => {
+    const combinado = {
+      total: 200000, totalCost: 120000, customerSurcharge: 3000, totalCommissions: 4120, finalTotal: 203000,
+      paymentMethods: [{ method: 'efectivo', amount: 100000 }, { method: 'tarjeta', amount: 103000, commission: 4120 }],
+    };
+    const r = recalcularTrasDevolucion(combinado, { total: 100000, totalCost: 60000 });
+    expect(r.paymentMethods).toEqual([
+      { method: 'efectivo', amount: 50000 },
+      { method: 'tarjeta', amount: 51500, commission: 2060 },
+    ]);
+    expect(r.paymentMethods!.reduce((s, p) => s + p.amount, 0)).toBe(r.finalTotal);
+  });
+
+  it('una venta sin lista de pagos sigue sin ella', () => {
+    const efectivo = { total: 200000, totalCost: 120000, finalTotal: 200000 };
+    expect(recalcularTrasDevolucion(efectivo, { total: 100000, totalCost: 60000 }).paymentMethods).toBeUndefined();
+  });
 });
 
 describe('saldo a favor: no se cuenta dos veces aunque venga en la lista', () => {

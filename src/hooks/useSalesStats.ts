@@ -72,7 +72,10 @@ export function useSalesStats({
   paymentMethodFilter = 'all',
   salesPersonFilter = 'all',
 }: UseSalesStatsOptions) {
-  const isLoadingRef = useRef(false);
+  // Cada consulta lleva un número y solo la más reciente escribe las cifras.
+  // Antes, si cambiaba un filtro mientras cargaban, la consulta nueva se
+  // descartaba y las cifras se quedaban con el filtro anterior.
+  const ultimaConsultaRef = useRef(0);
   const hasFetchedRef = useRef(false);
   const lastParamsRef = useRef<string>('');
   
@@ -100,19 +103,12 @@ export function useSalesStats({
 
   // Create a function that captures current parameters without dependencies
   const fetchStatsInternal = async () => {
-    // Check if already loading using ref (immediate check)
-    if (isLoadingRef.current) {
-      return;
-    }
-    
-    // Set loading state
-    isLoadingRef.current = true;
+    const consulta = ++ultimaConsultaRef.current;
     setStats((s) => ({ ...s, loading: true, error: null }));
     
     try {
       // Don't fetch stats if custom date filter is selected but no dates are provided
       if (dateFilter === 'custom' && (!customDateRange.startDate || !customDateRange.endDate)) {
-        isLoadingRef.current = false; // Reset loading state
         setStats({
           totalSales: 0,
           totalProfit: 0,
@@ -197,6 +193,8 @@ export function useSalesStats({
       // No paginación, traemos todo lo que cumpla los filtros
       const qFinal = query(q, ...constraints);
       const snap = await getDocs(qFinal);
+      // Llegó otra consulta mientras tanto: sus cifras son las que valen.
+      if (consulta !== ultimaConsultaRef.current) return;
       const sales = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Sale[];
 
       // FILTRO DE FECHA EN CLIENTE (TZ-independiente, comparación de strings ISO)
@@ -230,10 +228,12 @@ export function useSalesStats({
         return true;
       });
 
-      // Filtro de búsqueda (por producto, id o fecha seleccionada)
+      // Filtro de búsqueda (por producto, id o fecha seleccionada), sobre lo ya
+      // filtrado. Antes partía de todas las ventas del periodo y la búsqueda
+      // se saltaba los filtros de método de pago y vendedor.
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
-        filtered = sales.filter(sale => {
+        filtered = filtered.filter(sale => {
           // Buscar por id o producto
           const matchIdOrProduct = sale.id.toLowerCase().includes(term) ||
             (sale.items && sale.items.some((item: any) => item.productName?.toLowerCase().includes(term)));
@@ -427,16 +427,17 @@ export function useSalesStats({
         topProducts,
         allTimeBest,
       });
-      isLoadingRef.current = false; // Reset loading state
     } catch (err: any) {
-      isLoadingRef.current = false; // Reset loading state
+      if (consulta !== ultimaConsultaRef.current) return;
       setStats((s) => ({ ...s, loading: false, error: err.message || 'Error al calcular totales' }));
     }
   };
 
-  // Create stable fetchStats that doesn't change
+  // refetch estable, pero siempre con los filtros actuales.
+  const fetchStatsRef = useRef(fetchStatsInternal);
+  fetchStatsRef.current = fetchStatsInternal;
   const fetchStats = useCallback(() => {
-    fetchStatsInternal();
+    fetchStatsRef.current();
   }, []);
   
 

@@ -141,7 +141,7 @@ export function useCustomerSalesStats({
       // El ranking es costoso y no es crítico para la funcionalidad principal
 
       // Calcular estadísticas básicas del cliente
-      const totalSales = customerSales.reduce((sum, sale) => sum + (sale.total ?? 0), 0);
+      const totalSales = customerSales.reduce((sum, sale) => sum + (sale.finalTotal ?? sale.total ?? 0), 0);
       const totalProfit = customerSales.reduce((sum, sale) => sum + gananciaReal(sale), 0);
       const transactionCount = customerSales.length;
       const averageTransaction = transactionCount > 0 ? totalSales / transactionCount : 0;
@@ -162,8 +162,8 @@ export function useCustomerSalesStats({
           const dayKey = bogotaDateKey(dateObj);   // día calendario Colombia
           const monthKey = dayKey.slice(0, 7);     // "YYYY-MM" Colombia
 
-          salesByDay.set(dayKey, (salesByDay.get(dayKey) || 0) + (sale.total ?? 0));
-          salesByMonth.set(monthKey, (salesByMonth.get(monthKey) || 0) + (sale.total ?? 0));
+          salesByDay.set(dayKey, (salesByDay.get(dayKey) || 0) + (sale.finalTotal ?? sale.total ?? 0));
+          salesByMonth.set(monthKey, (salesByMonth.get(monthKey) || 0) + (sale.finalTotal ?? sale.total ?? 0));
         }
       });
 
@@ -241,7 +241,7 @@ export function useCustomerSalesStats({
           if (year === currentYear || year === lastYear) {
             const yearKey = year.toString();
             const existing = salesByYear.get(yearKey) || { total: 0, profit: 0, count: 0 };
-            existing.total += sale.total ?? 0;
+            existing.total += sale.finalTotal ?? sale.total ?? 0;
             existing.profit += gananciaReal(sale);
             existing.count += 1;
             salesByYear.set(yearKey, existing);

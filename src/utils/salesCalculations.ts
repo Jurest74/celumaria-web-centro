@@ -142,17 +142,36 @@ export const getTotalPaidAmount = (
  * El recargo que pago el cliente y la comision del datafono bajan en la misma
  * proporcion que el total, de modo que la venta queda como si se hubiera
  * hecho por la cantidad final.
+ *
+ * Los montos de cada método de pago (venta con pago combinado) bajan en esa
+ * misma proporción. Antes quedaban como estaban: el cuadre de caja por método
+ * sumaba más que la venta (200.000 en efectivo + transferencia para una venta
+ * que tras la devolución valía 100.000).
  */
 export const recalcularTrasDevolucion = (
-  original: { total: number; totalCost: number; customerSurcharge?: number; totalCommissions?: number; finalTotal?: number },
+  original: {
+    total: number; totalCost: number; customerSurcharge?: number; totalCommissions?: number; finalTotal?: number;
+    paymentMethods?: { method: string; amount: number; commission?: number }[];
+  },
   recalculado: { total: number; totalCost: number }
-): { total: number; totalCost: number; customerSurcharge: number; totalCommissions: number; finalTotal: number; totalProfit: number; profitMargin: number } => {
+): {
+  total: number; totalCost: number; customerSurcharge: number; totalCommissions: number; finalTotal: number;
+  totalProfit: number; profitMargin: number;
+  paymentMethods?: { method: string; amount: number; commission?: number }[];
+} => {
   const proporcion = original.total > 0 ? recalculado.total / original.total : 0;
 
   const customerSurcharge = (original.customerSurcharge || 0) * proporcion;
   const totalCommissions = (original.totalCommissions || 0) * proporcion;
   const finalTotal = recalculado.total + customerSurcharge;
   const totalProfit = finalTotal - recalculado.totalCost - totalCommissions;
+  const paymentMethods = Array.isArray(original.paymentMethods) && original.paymentMethods.length > 0
+    ? original.paymentMethods.map(pm => ({
+        ...pm,
+        amount: (pm.amount || 0) * proporcion,
+        ...(pm.commission !== undefined && { commission: pm.commission * proporcion }),
+      }))
+    : undefined;
 
   return {
     total: recalculado.total,
@@ -162,6 +181,7 @@ export const recalcularTrasDevolucion = (
     finalTotal,
     totalProfit,
     profitMargin: recalculado.total > 0 ? (totalProfit / recalculado.total) * 100 : 0,
+    ...(paymentMethods && { paymentMethods }),
   };
 };
 /**

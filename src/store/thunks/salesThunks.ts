@@ -101,7 +101,8 @@ export const processProductReturn = createAsyncThunk(
       profitMargin: ajustado.profitMargin,
       totalCommissions: ajustado.totalCommissions,
       customerSurcharge: ajustado.customerSurcharge,
-      finalTotal: ajustado.finalTotal
+      finalTotal: ajustado.finalTotal,
+      ...(ajustado.paymentMethods && { paymentMethods: ajustado.paymentMethods as Sale['paymentMethods'] })
     };
 
     // Actualización atómica en Firestore: ambas operaciones en un mismo batch.

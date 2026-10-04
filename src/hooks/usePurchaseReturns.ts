@@ -178,7 +178,9 @@ export function usePurchaseReturns() {
   };
 
   const getNetCost = (purchase: Purchase): number => {
-    return purchase.netCost || purchase.totalCost || 0;
+    // ?? y no ||: una compra devuelta por completo tiene netCost 0, y con ||
+    // se mostraba el costo original como neto.
+    return purchase.netCost ?? purchase.totalCost ?? 0;
   };
 
   return {

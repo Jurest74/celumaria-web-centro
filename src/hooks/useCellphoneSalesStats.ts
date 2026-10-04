@@ -212,6 +212,7 @@ export function useCellphoneSalesStats({
           const saleTotal = sale.items?.reduce((sum, item) => sum + (item.totalRevenue || 0), 0) || 0;
           let cellphoneDiscountForThisSale = 0;
           let cellphoneSurchargeForThisSale = 0;
+          let cellphoneCommissionForThisSale = 0;
           
           if (saleTotal > 0) {
             const cellphonePercentage = itemsSales / saleTotal;
@@ -220,6 +221,10 @@ export function useCellphoneSalesStats({
             
             // Incluir parte proporcional del recargo por método de pago
             cellphoneSurchargeForThisSale = (sale.customerSurcharge || 0) * cellphonePercentage;
+
+            // Y de la comisión del datáfono, que es un egreso real: la ganancia
+            // general ya la descuenta, la de celulares no lo hacía.
+            cellphoneCommissionForThisSale = (sale.totalCommissions || 0) * cellphonePercentage;
           }
           
           // Calcular ventas netas (después del descuento proporcional + recargo proporcional)
@@ -227,7 +232,7 @@ export function useCellphoneSalesStats({
           cellphoneSales += netSales;
           
           // La ganancia se recalcula con las ventas netas
-          const netProfit = netSales - itemsCost;
+          const netProfit = netSales - itemsCost - cellphoneCommissionForThisSale;
           cellphoneProfit += netProfit;
           cellphoneCost += itemsCost;
           

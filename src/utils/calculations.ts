@@ -215,9 +215,14 @@ export const dashboardCalculations = {
     const todaysSales = salesCalculations.getTodaysSales(sales);
     const activeLayaways = layaways.filter(l => l.status === 'active');
     
-    const layawayRevenue = layaways.reduce((sum, layaway) => 
-      sum + (layaway.totalAmount - layaway.remainingBalance), 0
-    );
+    // Abonos a plan separe registrados en el periodo (las ventas ya vienen
+    // filtradas por fecha), clasificados igual que en Mis Ventas del Día.
+    // Antes se tomaban los planes CREADOS en el periodo y se sumaba todo lo
+    // que se les había pagado, cuando fuera: un abono de hoy a un plan del mes
+    // pasado no aparecía en "Hoy".
+    const layawayRevenue = sales
+      .filter(sale => sale.type === 'layaway_payment' || (sale.isLayaway && sale.type !== 'layaway_delivery'))
+      .reduce((sum, sale) => sum + (sale.finalTotal || sale.total || 0), 0);
 
     const salesStats = salesCalculations.calculateSalesStats(sales);
     const inventoryValue = productCalculations.calculateInventoryValue(products);

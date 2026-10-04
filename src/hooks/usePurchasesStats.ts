@@ -87,7 +87,8 @@ export function usePurchasesStats({
       }
 
       // Calculate stats
-      const totalPurchases = filteredPurchases.reduce((sum, purchase) => sum + (purchase.totalCost || 0), 0);
+      // Neto de lo devuelto al proveedor, igual que cada fila de la lista.
+      const totalPurchases = filteredPurchases.reduce((sum, purchase) => sum + (purchase.netCost ?? purchase.totalCost ?? 0), 0);
       const totalItems = filteredPurchases.reduce((sum, purchase) => sum + (purchase.totalItems || 0), 0);
       const purchaseCount = filteredPurchases.length;
       const averagePurchase = purchaseCount > 0 ? totalPurchases / purchaseCount : 0;
