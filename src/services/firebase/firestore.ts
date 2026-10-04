@@ -1042,6 +1042,22 @@ export async function compromisosActivosDeCliente(customerId: string): Promise<{
   };
 }
 
+// Avisa a quien tenga los clientes en caché (FirebaseContext) que cambiaron.
+// Sin esto, un cliente recién creado no aparecía en Servicio técnico ni en
+// Ventas hasta recargar la página, porque la caché de 10 minutos seguía viva.
+const customersChangedListeners = new Set<() => void>();
+
+export function onCustomersChanged(listener: () => void): () => void {
+  customersChangedListeners.add(listener);
+  return () => {
+    customersChangedListeners.delete(listener);
+  };
+}
+
+function notifyCustomersChanged() {
+  customersChangedListeners.forEach(listener => listener());
+}
+
 export const customersService = {
   async getAll(): Promise<Customer[]> {
     const querySnapshot = await getDocs(
@@ -1062,6 +1078,7 @@ export const customersService = {
       createdAt: getColombiaTimestamp(),
       updatedAt: getColombiaTimestamp()
     });
+    notifyCustomersChanged();
     return docRef.id;
   },
 
@@ -1071,6 +1088,7 @@ export const customersService = {
       ...updates,
       updatedAt: getColombiaTimestamp()
     });
+    notifyCustomersChanged();
   },
 
   /**
@@ -1098,6 +1116,7 @@ export const customersService = {
         updatedAt: getColombiaTimestamp()
       });
     });
+    notifyCustomersChanged();
   },
 
   // Suma saldo a favor sin partir de una lectura previa.
@@ -1107,10 +1126,12 @@ export const customersService = {
       credit: increment(amount),
       updatedAt: getColombiaTimestamp()
     });
+    notifyCustomersChanged();
   },
 
   async delete(id: string): Promise<void> {
     await deleteDoc(doc(db, COLLECTIONS.CUSTOMERS, id));
+    notifyCustomersChanged();
   },
 
   subscribe(callback: (customers: Customer[]) => void) {

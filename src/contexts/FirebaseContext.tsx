@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { useAppDispatch } from '../hooks/useAppDispatch';
 import {
   setProducts,
@@ -30,7 +30,8 @@ import {
   customersService,
   layawaysService,
   technicalServicesService,
-  statsService
+  statsService,
+  onCustomersChanged
 } from '../services/firebase/firestore';
 
 interface FirebaseContextType {
@@ -74,6 +75,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     console.log(`🔄 Invalidando caché de: ${section}`);
     loadedSectionsRef.current.delete(section);
   }, []);
+
+  // Cualquier escritura de clientes (crear, editar, borrar, saldo a favor)
+  // vence la caché, para que la siguiente pantalla los traiga frescos.
+  useEffect(() => onCustomersChanged(() => invalidateCache('customers')), [invalidateCache]);
 
   const invalidateAllCache = useCallback(() => {
     console.log('🔄 Invalidando todo el caché');
