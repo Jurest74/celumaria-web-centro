@@ -31,6 +31,7 @@ import type {
 } from '../../types';
 import { getColombiaTimestamp, startOfDayBogota, endOfDayBogota, bogotaDateKey, formatDisplayDate } from '../../utils/dateUtils';
 import { formatCurrency } from '../../utils/currency';
+import { saldoAFavorDelPago, totalDelServicio } from '../../utils/servicioTecnico';
 import { agruparPedidos, faltantesDeStock, StockInsuficienteError, type Pedido } from '../../utils/stock';
 
 // Espera confirmación del servidor con timeout de 15 segundos
@@ -726,6 +727,8 @@ export interface CambiosEnTransaccion<R> {
   ventas?: Record<string, unknown>[];
   ventasABorrar?: string[];
   stock?: { productId: string; cambio: number }[];
+  // Saldo a favor que vuelve al cliente (p. ej. al anular un pago hecho con saldo).
+  saldoAFavor?: { customerId?: string; monto: number };
   resultado: R;
 }
 
@@ -735,6 +738,7 @@ export async function actualizarEnTransaccion<T, R>(
   construir: (actual: T) => CambiosEnTransaccion<R>
 ): Promise<R> {
   const ref = doc(db, coleccion, id);
+  let clienteConSaldo: string | undefined;
 
   const resultado = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
@@ -747,7 +751,12 @@ export async function actualizarEnTransaccion<T, R>(
     }
 
     const actual = { id: snap.id, ...cleanTimestamps(snap.data()) } as T;
-    const { cambios, ventas = [], ventasABorrar = [], stock = [], resultado } = construir(actual);
+    const { cambios, ventas = [], ventasABorrar = [], stock = [], saldoAFavor, resultado } = construir(actual);
+
+    const clienteRef = saldoAFavor && saldoAFavor.monto > 0 && saldoAFavor.customerId
+      ? doc(db, COLLECTIONS.CUSTOMERS, saldoAFavor.customerId)
+      : null;
+    const clienteExiste = clienteRef ? (await tx.get(clienteRef)).exists() : false;
 
     // Firestore exige que todas las lecturas ocurran antes de cualquier escritura.
     const productosExistentes = new Set<string>();
@@ -785,10 +794,20 @@ export async function actualizarEnTransaccion<T, R>(
       updatedAt: getColombiaTimestamp()
     }));
 
+    clienteConSaldo = undefined;
+    if (clienteRef && clienteExiste && saldoAFavor) {
+      tx.update(clienteRef, {
+        credit: increment(saldoAFavor.monto),
+        updatedAt: getColombiaTimestamp()
+      });
+      clienteConSaldo = saldoAFavor.customerId;
+    }
+
     return resultado;
   });
 
   await waitForServerConfirmation();
+  notifyDataChanged('customers', clienteConSaldo);
   return resultado;
 }
 
@@ -1830,6 +1849,7 @@ export const technicalServicesService = {
    */
   async quitarPagoDeVenta(serviceId: string, monto: number, saleId: string): Promise<void> {
     const serviceRef = doc(db, COLLECTIONS.TECHNICAL_SERVICES, serviceId);
+    let clienteConSaldo: string | undefined;
 
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(serviceRef);
@@ -1851,10 +1871,19 @@ export const technicalServicesService = {
         throw new Error(`El servicio técnico tiene ${candidatos.length} pagos por ese mismo monto y no se puede saber cuál corresponde. Elimínalo desde el servicio técnico.`);
       }
 
-      // Misma cuenta que al cancelar un pago desde la pantalla de Servicio Técnico.
+      // Misma cuenta que al cancelar un pago desde la pantalla de Servicio
+      // Técnico, con el precio actual: antes se usaba totalAmount, que no
+      // cambiaba al editar el precio, y un servicio que quedaba debiendo
+      // seguía "terminado".
       const pagosRestantes = pagos.filter(p => p.id !== candidatos[0].id);
       const totalPagado = pagosRestantes.reduce((sum, p) => sum + p.amount, 0);
-      const nuevoSaldo = servicio.totalAmount - totalPagado;
+      const nuevoSaldo = totalDelServicio(servicio) - totalPagado;
+
+      // Si el pago se hizo en parte con saldo a favor, ese saldo vuelve al
+      // cliente. Antes se perdía.
+      const saldoDevuelto = saldoAFavorDelPago(candidatos[0] as { paymentMethods?: { method: string; amount: number }[] });
+      const clienteRef = saldoDevuelto > 0 && servicio.customerId ? doc(db, COLLECTIONS.CUSTOMERS, servicio.customerId) : null;
+      const clienteExiste = clienteRef ? (await tx.get(clienteRef)).exists() : false;
 
       const cambios: Record<string, unknown> = {
         payments: pagosRestantes,
@@ -1878,9 +1907,17 @@ export const technicalServicesService = {
 
       tx.update(serviceRef, removeUndefined(cambios));
       tx.delete(doc(db, COLLECTIONS.SALES, saleId));
+      if (clienteRef && clienteExiste) {
+        tx.update(clienteRef, {
+          credit: increment(saldoDevuelto),
+          updatedAt: getColombiaTimestamp()
+        });
+        clienteConSaldo = servicio.customerId;
+      }
     });
 
     await waitForServerConfirmation();
+    notifyDataChanged('customers', clienteConSaldo);
   },
 
   async delete(id: string): Promise<void> {

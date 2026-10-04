@@ -19,6 +19,7 @@ import { upsertTechnicalService } from '../store/slices/firebaseSlice';
 
 // AddProductsToLayawayPOS no se usa más - los repuestos se agregan al crear el servicio
 import { CustomerComboBox } from './CustomerComboBox';
+import { saldoAFavorDelPago, saldoDelServicio, totalDelServicio } from '../utils/servicioTecnico';
 import { CourtesyModal } from './CourtesyModal';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -584,6 +585,10 @@ export function TechnicalService() {
           remainingBalance: actual.remainingBalance - removedAmount
         };
         if (actual.serviceCost !== undefined) {
+          // Con precio total el cliente paga lo acordado: total y saldo no
+          // cambian por quitar un repuesto.
+          cambios.totalAmount = actual.serviceCost;
+          cambios.remainingBalance = saldoDelServicio({ ...actual, items: updatedItems });
           // Igual que al agregar un repuesto: con menos repuestos, más mano de
           // obra. Antes no se recalculaba y el técnico se liquidaba de menos.
           const partsCost = updatedItems.reduce((sum, item) => sum + (item.totalCost || 0), 0);
@@ -791,6 +796,9 @@ export function TechnicalService() {
           cambios.laborCost = laborCost;
           cambios.technicianShare = laborCost * 0.5;
           cambios.businessShare = laborCost * 0.5;
+          // El total y el saldo guardados siguen al precio.
+          cambios.totalAmount = editingData.serviceCost || 0;
+          cambios.remainingBalance = saldoDelServicio({ ...actual, serviceCost: editingData.serviceCost || 0 });
         } else {
           // Servicios anteriores al costo total: la mano de obra se edita directo.
           cambios.laborCost = editingData.laborCost;
@@ -1041,7 +1049,6 @@ export function TechnicalService() {
         );
       }
 
-      const newRemainingBalance = actual.remainingBalance - totalAmount;
       // Don't automatically change status to completed, keep it as active until manually closed
       const newStatus = actual.status;
 
@@ -1049,6 +1056,9 @@ export function TechnicalService() {
         ...p,
         paymentMethod: (['efectivo', 'transferencia', 'tarjeta', 'crédito'].includes(p.paymentMethod) ? p.paymentMethod : 'efectivo') as 'efectivo' | 'transferencia' | 'tarjeta' | 'crédito'
       }));
+      // Con el precio actual: antes se restaba del remainingBalance guardado,
+      // que no cambiaba al editar el precio, y el aviso mostraba un saldo falso.
+      const newRemainingBalance = saldoDelServicio({ ...actual, payments: updatedPayments });
 
       // completedAt will be set when service is manually closed
       const cambios: Record<string, unknown> = {
@@ -1639,10 +1649,11 @@ export function TechnicalService() {
             }
 
             // Filtrar el pago cancelado
+            const pagoAnulado = actual.payments.find(p => p.id === paymentId)!;
             const updatedPayments = actual.payments.filter(p => p.id !== paymentId);
-            // Recalcular saldo pendiente
+            // Recalcular saldo pendiente con el precio actual
             const totalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-            const newRemainingBalance = actual.totalAmount - totalPaid;
+            const newRemainingBalance = totalDelServicio(actual) - totalPaid;
             // Si estaba completado y ahora tiene saldo pendiente, volver a activo y revertir recogidas automáticas
             let newStatus = actual.status;
             let updatedItems = actual.items;
@@ -1675,6 +1686,9 @@ export function TechnicalService() {
             return {
               cambios,
               ventasABorrar: abonoSaleId ? [abonoSaleId] : [],
+              // La parte del pago hecha con saldo a favor vuelve al cliente.
+              // Antes se anulaba el pago y el cliente perdía ese saldo.
+              saldoAFavor: { customerId: actual.customerId, monto: saldoAFavorDelPago(pagoAnulado as { paymentMethods?: { method: string; amount: number }[] }) },
               resultado: {
                 updatedService: {
                   ...actual,
@@ -1775,7 +1789,46 @@ export function TechnicalService() {
             statusChangedAt: getColombiaTimestamp()
           };
           const ventas: Record<string, unknown>[] = [];
-
+          // Sin pagos previos, la penalización es dinero que el cliente paga
+          // al cancelar: queda como pago del servicio y como ingreso. Antes el
+          // aviso decía "se cobraron" pero no quedaba registrada en ningún lado.
+          if (totalPagado <= 0.01 && penaltyAmount > 0) {
+            cambios.payments = [...(actual.payments || []), {
+              id: crypto.randomUUID(),
+              amount: penaltyAmount,
+              paymentDate: getColombiaTimestamp(),
+              paymentMethod: 'efectivo' as const,
+              paymentMethods: [{ method: 'efectivo' as const, amount: penaltyAmount, commission: 0 }],
+              notes: 'Penalización por cancelación del servicio',
+              registeredBy: appUser?.uid,
+              registeredByName: appUser?.displayName || appUser?.email,
+              registeredAt: getColombiaTimestamp()
+            }];
+            ventas.push({
+              items: [],
+              subtotal: penaltyAmount,
+              discount: 0,
+              tax: 0,
+              total: penaltyAmount,
+              finalTotal: penaltyAmount,
+              totalCost: 0,
+              totalRevenue: penaltyAmount,
+              totalProfit: penaltyAmount,
+              profitMargin: 100,
+              paymentMethod: 'efectivo',
+              paymentMethods: [{ method: 'efectivo', amount: penaltyAmount, commission: 0 }],
+              useMultiplePayments: false,
+              totalCommissions: 0,
+              customerName: actual.customerName,
+              customerId: actual.customerId,
+              salesPersonId: appUser?.uid,
+              salesPersonName: appUser?.displayName || appUser?.email,
+              technicalServiceId: actual.id,
+              type: 'technical_service_payment',
+              notes: `💻 Penalización por cancelación: ${actual.deviceBrandModel || 'Dispositivo'} - Cliente: ${actual.customerName}`,
+              updatedAt: getColombiaTimestamp()
+            });
+          }
           if (refundAmount > 0) {
             cambios.payments = [...(actual.payments || []), {
               id: crypto.randomUUID(),
@@ -2032,7 +2085,7 @@ export function TechnicalService() {
           <div class="separator"></div>
           
           <div class="section">
-            <div><span class="label">Total:</span> ${formatCurrency(service.totalAmount)}</div>
+            <div><span class="label">Total:</span> ${formatCurrency(totalDelServicio(service))}</div>
             <div><span class="label">Abono:</span> ${formatCurrency(service.payments?.reduce((sum, p) => sum + p.amount, 0) || 0)}</div>
           </div>
         </body>
@@ -4246,11 +4299,17 @@ export function TechnicalService() {
                       const newPartsCostAdd = updatedItems.reduce((sum, i) => sum + i.totalCost, 0);
                       const newLaborCostAdd = svcCostAdd !== undefined ? Math.max(0, svcCostAdd - newPartsCostAdd) : undefined;
 
+                      // Con precio total el cliente paga lo acordado: el
+                      // repuesto cambia la mano de obra, no el total. Antes el
+                      // total subía y el servicio quedaba debiendo de más.
+                      const conPrecioTotal = svcCostAdd !== undefined;
                       const cambios = {
                         items: updatedItems,
-                        totalAmount: actual.totalAmount + additionalAmount,
+                        totalAmount: conPrecioTotal ? svcCostAdd : actual.totalAmount + additionalAmount,
                         totalCost: actual.totalCost + additionalAmount,
-                        remainingBalance: actual.remainingBalance + additionalAmount,
+                        remainingBalance: conPrecioTotal
+                          ? saldoDelServicio({ ...actual, items: updatedItems })
+                          : actual.remainingBalance + additionalAmount,
                         ...(newLaborCostAdd !== undefined && {
                           laborCost: newLaborCostAdd,
                           technicianShare: newLaborCostAdd * 0.5,
