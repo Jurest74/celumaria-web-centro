@@ -50,6 +50,20 @@ interface UIState {
   showCourtesyModal: boolean;
 }
 
+// Fecha de la venta para la factura. Antes se imprimía la hora del momento de
+// imprimir, así que una venta reimpresa desde Gestión de Ventas salía con la
+// fecha de hoy. Recién hecha la venta aún no trae createdAt: ahí es "ahora".
+const fechaDeVenta = (sale: { createdAt?: unknown }): Date => {
+  const creada = sale.createdAt as { seconds?: number } | string | undefined;
+  if (typeof creada === 'string') {
+    const fecha = new Date(creada);
+    if (!isNaN(fecha.getTime())) return fecha;
+  } else if (creada && typeof creada.seconds === 'number') {
+    return new Date(creada.seconds * 1000);
+  }
+  return new Date();
+};
+
 export function InvoiceModal({ sale, onClose }: { sale: any; onClose: () => void }) {
   // Ref for printable area
   const printRef = useRef<HTMLDivElement>(null);
@@ -181,7 +195,7 @@ export function InvoiceModal({ sale, onClose }: { sale: any; onClose: () => void
           <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }}></div>
           
           <h2 className="font-bold mb-2 center" style={{ fontSize: '16px', margin: '8px 0' }}>Cuenta de Cobro</h2>
-          <div className="text-xs text-gray-600 mb-3" style={{ marginBottom: '4px', fontSize: '11px', textAlign: 'left' }}>Fecha: {new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</div>
+          <div className="text-xs text-gray-600 mb-3" style={{ marginBottom: '4px', fontSize: '11px', textAlign: 'left' }}>Fecha: {fechaDeVenta(sale).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</div>
           {/* Mostrar nombre del cliente si está seleccionado */}
           {sale.customerName && (
             <div className="text-xs text-gray-900 mb-2" style={{ marginBottom: '2px', fontWeight: '500', fontSize: '11px', textAlign: 'left' }}>Cliente: {sale.customerName}</div>
