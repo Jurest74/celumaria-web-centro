@@ -174,24 +174,6 @@ export function TechnicianLiquidationComponent() {
     });
   }, [completedServices, marcadosPendientes]);
 
-  // Limpiar servicios seleccionados que ya no están disponibles
-  useEffect(() => {
-    const availableServiceIds = new Set(pendingServices.map(s => s.id));
-    const currentSelectedServices = new Set(selectedServices);
-    
-    // Remover servicios seleccionados que ya no están en la lista de pendientes
-    for (const serviceId of currentSelectedServices) {
-      if (!availableServiceIds.has(serviceId)) {
-        currentSelectedServices.delete(serviceId);
-      }
-    }
-    
-    // Solo actualizar si hay cambios
-    if (currentSelectedServices.size !== selectedServices.size) {
-      setSelectedServices(currentSelectedServices);
-    }
-  }, [pendingServices, selectedServices]);
-
   // Filtrar servicios pendientes
   const filteredPendingServices = useMemo(() => {
     return pendingServices.filter(service => {
@@ -221,6 +203,18 @@ export function TechnicianLiquidationComponent() {
       return matchesTechnician && matchesDateRange && matchesSearch && matchesPaymentMethod;
     });
   }, [pendingServices, selectedTechnicianFilter, dateFromFilter, dateToFilter, searchTerm, paymentMethodFilter]);
+
+  // Desmarcar los servicios que ya no se ven: los que dejaron de estar
+  // pendientes y los que esconde un filtro. Antes solo se quitaban los
+  // primeros, así que un servicio marcado y luego oculto con la búsqueda, el
+  // técnico o las fechas se liquidaba sin estar en pantalla.
+  useEffect(() => {
+    const visibles = new Set(filteredPendingServices.map(s => s.id));
+    const seleccionVisible = new Set([...selectedServices].filter(id => visibles.has(id)));
+    if (seleccionVisible.size !== selectedServices.size) {
+      setSelectedServices(seleccionVisible);
+    }
+  }, [filteredPendingServices, selectedServices]);
 
   // Filtrar liquidaciones
   const filteredLiquidations = useMemo(() => {
@@ -515,11 +509,7 @@ export function TechnicianLiquidationComponent() {
                 </label>
                 <select
                   value={paymentMethodFilter}
-                  onChange={(e) => {
-                    setPaymentMethodFilter(e.target.value as MetodoPagoLiquidacion | '');
-                    // Que no se liquiden servicios marcados antes que el filtro ya no muestra.
-                    setSelectedServices(new Set());
-                  }}
+                  onChange={(e) => setPaymentMethodFilter(e.target.value as MetodoPagoLiquidacion | '')}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="">Todos los métodos</option>

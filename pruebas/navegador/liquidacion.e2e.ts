@@ -273,3 +273,24 @@ test('en el Historial, con un método elegido, Ingresos suma solo lo recibido co
   // Andrés 150.000 en efectivo más la parte en efectivo de Carlos.
   await expect(ingresos).toHaveText('$ 200.000');
 });
+
+test('un servicio marcado y luego oculto con la búsqueda no se liquida', async ({ page }) => {
+  await prepararTaller();
+  await iniciarSesion(page, ADMIN);
+  await servicioTerminado(page);
+  await servicioPorTransferencia();
+  await page.goto('/');
+  await irA(page, 'Liquidación de Técnicos');
+  await page.getByRole('heading', { name: 'Andrés Ríos' }).locator('xpath=ancestor::div[.//input[@type="checkbox"]][1]')
+    .locator('input[type="checkbox"]').check();
+  await expect(page.getByRole('button', { name: 'Crear Liquidación (1)' })).toBeVisible();
+
+  await page.getByPlaceholder('Cliente, técnico, dispositivo...').fill('Beatriz');
+  await expect(page.getByRole('heading', { name: 'Andrés Ríos' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Crear Liquidación \(/ })).toHaveCount(0);
+
+  // Al volver a mostrarlo sigue sin marcar.
+  await page.getByPlaceholder('Cliente, técnico, dispositivo...').fill('');
+  await expect(page.getByRole('heading', { name: 'Andrés Ríos' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Crear Liquidación \(/ })).toHaveCount(0);
+});
