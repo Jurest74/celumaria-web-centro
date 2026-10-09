@@ -7,7 +7,7 @@ import { TechnicalService, TechnicianLiquidation, Technician } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { useNotification } from '../contexts/NotificationContext';
 import { bogotaDateKey, subtractDaysBogota, startOfDayBogota, endOfDayBogota } from '../utils/dateUtils';
-import { montosLiquidacion } from '../utils/liquidacion';
+import { montosLiquidacion, metodosDePago, MetodoPagoLiquidacion } from '../utils/liquidacion';
 
 export function TechnicianLiquidationComponent() {
   const { showSuccess, showError, showWarning } = useNotification();
@@ -25,6 +25,7 @@ export function TechnicianLiquidationComponent() {
   const [dateFromFilter, setDateFromFilter] = useState(today);
   const [dateToFilter, setDateToFilter] = useState(today);
   const [searchTerm, setSearchTerm] = useState('');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<MetodoPagoLiquidacion | ''>('');
   const [selectedServices, setSelectedServices] = useState<Set<string>>(new Set());
   const [showLiquidationModal, setShowLiquidationModal] = useState(false);
   const [liquidationNotes, setLiquidationNotes] = useState('');
@@ -214,9 +215,12 @@ export function TechnicianLiquidationComponent() {
         service.deviceBrandModel?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         service.technicianName?.toLowerCase().includes(searchTerm.toLowerCase());
       
-      return matchesTechnician && matchesDateRange && matchesSearch;
+      // Basta con que el cliente haya pagado una parte con ese método.
+      const matchesPaymentMethod = !paymentMethodFilter || metodosDePago(service.payments).has(paymentMethodFilter);
+
+      return matchesTechnician && matchesDateRange && matchesSearch && matchesPaymentMethod;
     });
-  }, [pendingServices, selectedTechnicianFilter, dateFromFilter, dateToFilter, searchTerm]);
+  }, [pendingServices, selectedTechnicianFilter, dateFromFilter, dateToFilter, searchTerm, paymentMethodFilter]);
 
   // Filtrar liquidaciones
   const filteredLiquidations = useMemo(() => {
@@ -504,6 +508,29 @@ export function TechnicianLiquidationComponent() {
               />
             </div>
 
+            {activeTab === 'pending' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Método de pago
+                </label>
+                <select
+                  value={paymentMethodFilter}
+                  onChange={(e) => {
+                    setPaymentMethodFilter(e.target.value as MetodoPagoLiquidacion | '');
+                    // Que no se liquiden servicios marcados antes que el filtro ya no muestra.
+                    setSelectedServices(new Set());
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">Todos los métodos</option>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="tarjeta">Tarjeta</option>
+                  <option value="saldo">Saldo a favor</option>
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Buscar
@@ -628,6 +655,18 @@ export function TechnicianLiquidationComponent() {
                             <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded">
                               Completado
                             </span>
+                            {(() => {
+                              const metodos = metodosDePago(service.payments);
+                              if (metodos.size === 0) return null;
+                              const nombres: Record<MetodoPagoLiquidacion, string> = {
+                                efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta', saldo: 'Saldo a favor'
+                              };
+                              return (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  Pagó: {[...metodos].map(m => nombres[m]).join(', ')}
+                                </div>
+                              );
+                            })()}
                           </div>
                           
                           {/* Technician */}

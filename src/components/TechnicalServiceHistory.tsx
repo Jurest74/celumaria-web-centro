@@ -24,6 +24,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { COLLECTIONS } from '../services/firebase/collections';
 import { startOfDayBogota, endOfDayBogota, subtractDaysBogota, bogotaDateKey } from '../utils/dateUtils';
+import { metodosDePago, montoPorMetodo, MetodoPagoLiquidacion } from '../utils/liquidacion';
 
 const BOGOTA_OFFSET = '-05:00';
 
@@ -92,6 +93,7 @@ export function TechnicalServiceHistory() {
   const [customDateRange, setCustomDateRange] = useState({ startDate: '', endDate: '' });
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('all');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<MetodoPagoLiquidacion | 'all'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'total' | 'profit'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
@@ -340,6 +342,9 @@ export function TechnicalServiceHistory() {
         if (paymentStatusFilter !== paymentStatus) return false;
       }
 
+      // Filtro de método de pago: basta con una parte pagada con ese método
+      if (paymentMethodFilter !== 'all' && !metodosDePago(service.payments).has(paymentMethodFilter)) return false;
+
       // Filtro de fecha - usar fecha apropiada según el estado filtrado
       let serviceDate: Date | null;
       if (statusFilter === 'completed') {
@@ -394,7 +399,7 @@ export function TechnicalServiceHistory() {
     });
 
     return filtered;
-  }, [allTechnicalServices, searchTerm, dateFilter, customDateRange, statusFilter, paymentStatusFilter, sortBy, sortOrder, customers]);
+  }, [allTechnicalServices, searchTerm, dateFilter, customDateRange, statusFilter, paymentStatusFilter, paymentMethodFilter, sortBy, sortOrder, customers]);
 
   // Paginación
   const totalServices = filteredAndSortedServices.length;
@@ -407,15 +412,23 @@ export function TechnicalServiceHistory() {
     const completedServices = filteredAndSortedServices.filter(s => s.status === 'completed');
     const activeServices = filteredAndSortedServices.filter(s => s.status === 'active');
     
+    // Con un método de pago elegido, los ingresos son solo lo recibido con ese
+    // método: un servicio pagado mitad efectivo y mitad transferencia aparece en
+    // los dos filtros, pero en cada uno aporta solo su parte.
+    const pagadoDelServicio = (service: TechnicalService) =>
+      paymentMethodFilter === 'all'
+        ? calculateRealTotals(service).totalPaid
+        : montoPorMetodo(service.payments, paymentMethodFilter);
+
     // Calcular ingresos basados en pagos reales recibidos (no solo servicios completados)
     const totalRevenue = filteredAndSortedServices.reduce((sum, service) => {
-      const { totalPaid } = calculateRealTotals(service);
-      return sum + totalPaid;
+      return sum + pagadoDelServicio(service);
     }, 0);
     
     // Para ganancia y costo, usar proporcional basado en pagos recibidos
     const totalCost = filteredAndSortedServices.reduce((sum, service) => {
-      const { totalPaid, realTotal, realCost } = calculateRealTotals(service);
+      const { realTotal, realCost } = calculateRealTotals(service);
+      const totalPaid = pagadoDelServicio(service);
       // Calcular costo proporcional basado en lo pagado
       const proportionalCost = realTotal > 0 ? (totalPaid / realTotal) * realCost : 0;
       return sum + proportionalCost;
@@ -448,7 +461,7 @@ export function TechnicalServiceHistory() {
       servicesFullyPaid,
       totalPendingAmount
     };
-  }, [filteredAndSortedServices]);
+  }, [filteredAndSortedServices, paymentMethodFilter]);
 
   // Funciones para obtener colores y textos de estado
   const getStatusColor = (status: string) => {
@@ -623,7 +636,7 @@ export function TechnicalServiceHistory() {
 
               {/* Filtros */}
               <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-300">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
 
                   {/* Filtro de fecha */}
                   <div>
@@ -675,6 +688,24 @@ export function TechnicalServiceHistory() {
                       <option value="paid">Pagado completo</option>
                       <option value="partial">Pago parcial</option>
                       <option value="pending">Sin pagos</option>
+                    </select>
+                  </div>
+
+                  {/* Filtro de método de pago */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Método de Pago
+                    </label>
+                    <select
+                      value={paymentMethodFilter}
+                      onChange={(e) => setPaymentMethodFilter(e.target.value as MetodoPagoLiquidacion | 'all')}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">Todos los métodos</option>
+                      <option value="efectivo">Efectivo</option>
+                      <option value="transferencia">Transferencia</option>
+                      <option value="tarjeta">Tarjeta</option>
+                      <option value="saldo">Saldo a favor</option>
                     </select>
                   </div>
 

@@ -45,3 +45,49 @@ export const montosLiquidacion = (servicio: ServicioLiquidable): {
     technicianShare: servicio.technicianShare ?? laborCost * PARTICIPACION_TECNICO
   };
 };
+
+// Métodos con que el cliente pagó un servicio, para filtrar la liquidación.
+//
+// Un pago puede combinar varios métodos en paymentMethods; paymentMethod solo
+// guarda el principal y cae en 'efectivo' cuando todo se pagó con saldo a
+// favor, así que se usa únicamente en pagos viejos sin paymentMethods. Los
+// montos negativos (devoluciones, sobrepagos pasados a saldo a favor) no son
+// dinero recibido y no cuentan. 'credit' y 'crédito' son el mismo saldo a favor.
+
+export type MetodoPagoLiquidacion = 'efectivo' | 'transferencia' | 'tarjeta' | 'saldo';
+
+export interface PagoConMetodo {
+  amount: number;
+  paymentMethod?: string;
+  paymentMethods?: { method: string; amount: number }[];
+}
+
+const normalizarMetodo = (metodo: string): MetodoPagoLiquidacion | null => {
+  if (metodo === 'efectivo' || metodo === 'transferencia' || metodo === 'tarjeta') return metodo;
+  if (metodo === 'credit' || metodo === 'crédito') return 'saldo';
+  return null;
+};
+
+const partesDePago = (pago: PagoConMetodo): { method: string; amount: number }[] =>
+  Array.isArray(pago.paymentMethods) && pago.paymentMethods.length > 0
+    ? pago.paymentMethods
+    : [{ method: pago.paymentMethod || 'efectivo', amount: pago.amount }];
+
+export const metodosDePago = (payments: PagoConMetodo[] | undefined): Set<MetodoPagoLiquidacion> => {
+  const metodos = new Set<MetodoPagoLiquidacion>();
+  for (const pago of payments || []) {
+    for (const parte of partesDePago(pago)) {
+      const metodo = normalizarMetodo(parte.method);
+      if (metodo && parte.amount > 0) metodos.add(metodo);
+    }
+  }
+  return metodos;
+};
+
+// Lo recibido con un método, neto: aquí sí restan las devoluciones hechas con
+// ese mismo método, como en el total pagado del servicio.
+export const montoPorMetodo = (payments: PagoConMetodo[] | undefined, metodo: MetodoPagoLiquidacion): number =>
+  (payments || []).reduce((total, pago) =>
+    total + partesDePago(pago)
+      .filter(parte => normalizarMetodo(parte.method) === metodo)
+      .reduce((sum, parte) => sum + parte.amount, 0), 0);
